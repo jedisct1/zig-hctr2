@@ -58,4 +58,20 @@ pub fn build(b: *std.Build) void {
     });
     const run_lfsr_tests = b.addRunArtifact(lfsr_tests);
     test_step.dependOn(&run_lfsr_tests.step);
+
+    // Add benchmark step
+    const benchmark_step = b.step("bench", "Run benchmarks");
+
+    const benchmark_exe = b.addExecutable(.{
+        .name = "benchmark",
+        .root_source_file = b.path("src/benchmark.zig"),
+        .target = target,
+        .optimize = .ReleaseFast,
+    });
+    const run_benchmark = b.addRunArtifact(benchmark_exe);
+    benchmark_step.dependOn(&run_benchmark.step);
+
+    // Install the benchmark binary
+    const install_benchmark = b.addInstallArtifact(benchmark_exe, .{});
+    b.getInstallStep().dependOn(&install_benchmark.step);
 }
