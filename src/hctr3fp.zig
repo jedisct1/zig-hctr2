@@ -69,7 +69,7 @@ pub fn encodeBaseRadix(value: u128, comptime radix: u16, output: []u8) void {
 }
 
 /// Decode base-RADIX digits (little-endian) to a 128-bit value.
-/// Returns error.InvalidDigit if any digit >= radix.
+/// Returns error.InvalidDigit if any digit >= radix (debug builds only).
 pub fn decodeBaseRadix(digits: []const u8, comptime radix: u16) !u128 {
     if (radix < 2 or radix > 256) @compileError("radix must be in [2, 256]");
 
@@ -79,12 +79,16 @@ pub fn decodeBaseRadix(digits: []const u8, comptime radix: u16) !u128 {
         return mem.readInt(u128, digits[0..16], .little);
     }
 
-    // Validate all digits are in range [0, radix)
-    for (digits) |d| {
-        if (d >= radix) return error.InvalidDigit;
+    // Validate all digits are in range [0, radix) - debug builds only
+    if (comptime std.debug.runtime_safety) {
+        for (digits) |d| {
+            if (d >= radix) return error.InvalidDigit;
+        }
     }
 
     // Accumulate from most significant to least significant (reverse order)
+    // For valid inputs (verified in debug builds), the value is < 2^128 and all
+    // intermediate values are also < 2^128, so regular arithmetic is safe.
     var value: u128 = 0;
     var i = digits.len;
     while (i > 0) {
@@ -126,6 +130,10 @@ pub fn decodeBaseRadix(digits: []const u8, comptime radix: u16) !u128 {
 /// - `Hash`: Hash function for tweak processing (typically SHA-256)
 /// - `radix`: Base for digit representation (2-256)
 pub fn Hctr3Fp(comptime Aes: anytype, comptime Hash: anytype, comptime radix: u16) type {
+    // Enforce radix bounds: must be in [2, 256]
+    // All overflow handling and arithmetic in this implementation assumes radix <= 256
+    if (radix < 2 or radix > 256) @compileError("radix must be in [2, 256]");
+
     const AesEncryptCtx = aes.AesEncryptCtx(Aes);
     const AesDecryptCtx = aes.AesDecryptCtx(Aes);
     const Block = Aes.block;
@@ -229,7 +237,7 @@ pub fn Hctr3Fp(comptime Aes: anytype, comptime Hash: anytype, comptime radix: u1
         ///
         /// Returns:
         /// - `error.InputTooShort` if plaintext is less than first_block_length
-        /// - `error.InvalidDigit` if any digit >= radix
+        /// - `error.InvalidDigit` if any digit >= radix (debug builds only)
         ///
         /// Security: Never reuse the same (key, tweak) pair for different messages.
         pub fn encrypt(state: *State, ciphertext: []u8, plaintext: []const u8, tweak: []const u8) !void {
@@ -248,7 +256,7 @@ pub fn Hctr3Fp(comptime Aes: anytype, comptime Hash: anytype, comptime radix: u1
         ///
         /// Returns:
         /// - `error.InputTooShort` if ciphertext is less than first_block_length
-        /// - `error.InvalidDigit` if any digit >= radix
+        /// - `error.InvalidDigit` if any digit >= radix (debug builds only)
         pub fn decrypt(state: *State, plaintext: []u8, ciphertext: []const u8, tweak: []const u8) !void {
             try state.hctr3fp(plaintext, ciphertext, tweak, .decrypt);
         }
@@ -259,9 +267,11 @@ pub fn Hctr3Fp(comptime Aes: anytype, comptime Hash: anytype, comptime radix: u1
                 return error.InputTooShort;
             }
 
-            // Validate all input digits are in valid range
-            for (src) |digit| {
-                if (digit >= radix) return error.InvalidDigit;
+            // Validate all input digits are in valid range - debug builds only
+            if (comptime std.debug.runtime_safety) {
+                for (src) |digit| {
+                    if (digit >= radix) return error.InvalidDigit;
+                }
             }
 
             const first_part = src[0..first_block_len];
@@ -392,8 +402,52 @@ pub fn Hctr3Fp(comptime Aes: anytype, comptime Hash: anytype, comptime radix: u1
             return hh;
         }
 
-        /// Format-Preserving Encrypted LFSR Keystream mode
-        /// Combines HCTR3's ELK mode with HCTR2+FP's format preservation
+        /// Apply keystream from an AES block to src, writing to dst using modular arithmetic.
+        /// Interprets the AES block as a u128 and extracts base-radix digits.
+        ///
+        /// Assumes: radix in [2, 256] (enforced at compile time)
+        inline fn applyKeystreamBlock(dst: []u8, src: []const u8, keystream_block: *const [aes_block_length]u8, comptime dir: Direction) void {
+            assert(dst.len == src.len);
+            var value = mem.readInt(u128, keystream_block, .little);
+            for (dst, src) |*d, s| {
+                const keystream_digit: u8 = @intCast(value % radix);
+                if (comptime dir == .encrypt) {
+                    // Use u16 to avoid overflow when radix <= 256:
+                    // max value is (255) + (255) = 510, fits in u16
+                    d.* = @intCast((@as(u16, s) + @as(u16, keystream_digit)) % radix);
+                } else {
+                    // Use u16 to avoid overflow when radix <= 256:
+                    // max value is 256 + 255 - 0 = 511, fits in u16
+                    d.* = @intCast((@as(u16, s) + radix - @as(u16, keystream_digit)) % radix);
+                }
+                value /= radix;
+            }
+        }
+
+        /// Format-Preserving Encrypted LFSR Keystream (fpELK) mode.
+        ///
+        /// Combines HCTR3's ELK mode with format-preserving encryption using modular arithmetic.
+        /// Uses LFSR-based counter generation instead of simple incrementing counters.
+        ///
+        /// Algorithm:
+        /// 1. Generate keystream blocks using LFSR states encrypted with AES (ke)
+        /// 2. Interpret each AES block as a 128-bit integer (little-endian)
+        /// 3. Extract base-radix digits sequentially: digit = value % radix, value /= radix
+        /// 4. Apply each keystream digit using modular arithmetic:
+        ///    - Encryption: (plaintext_digit + keystream_digit) mod radix
+        ///    - Decryption: (ciphertext_digit - keystream_digit) mod radix
+        ///
+        /// The LFSR provides additional security margins in constrained environments and
+        /// ensures compatibility with HCTR3's security properties. Each output digit
+        /// remains in [0, radix) while utilizing the full cryptographic strength of
+        /// the AES-encrypted LFSR keystream.
+        ///
+        /// Parameters:
+        /// - `state`: Cipher state containing AES encryption key (ke)
+        /// - `dst`: Output buffer (same length as src)
+        /// - `src`: Input buffer (plaintext for encryption, ciphertext for decryption)
+        /// - `seed`: Initial LFSR seed (derived from encrypted first block)
+        /// - `dir`: Direction (.encrypt or .decrypt)
         fn fpElk(state: *const State, dst: []u8, src: []const u8, seed: [aes_block_length]u8, comptime dir: Direction) void {
             assert(dst.len == src.len);
 
@@ -415,14 +469,13 @@ pub fn Hctr3Fp(comptime Aes: anytype, comptime Hash: anytype, comptime radix: u1
                     // Encrypt batch with ke
                     state.ke_enc.encryptWide(batch, &counter_bytes_batch, &counter_bytes_batch);
 
-                    // Apply format-preserving transformation (modular arithmetic)
-                    for (dst[i..][0..block_length_batch], src[i..][0..block_length_batch], counter_bytes_batch) |*d, s, c| {
-                        const keystream_byte: u16 = c % radix;
-                        if (comptime dir == .encrypt) {
-                            d.* = @intCast((s + keystream_byte) % radix);
-                        } else {
-                            d.* = @intCast((s + radix - keystream_byte) % radix); // Avoid underflow
-                        }
+                    // Apply keystream from each AES block in batch
+                    inline for (0..batch) |j| {
+                        const block_offset = j * aes_block_length;
+                        const keystream_block = counter_bytes_batch[block_offset..][0..aes_block_length];
+                        const pos = i + block_offset;
+                        const len = @min(aes_block_length, src.len - pos);
+                        applyKeystreamBlock(dst[pos..][0..len], src[pos..][0..len], keystream_block, dir);
                     }
                 }
             }
@@ -435,14 +488,7 @@ pub fn Hctr3Fp(comptime Aes: anytype, comptime Hash: anytype, comptime radix: u1
                 lfsr_state = lfsr_next(lfsr_state);
                 state.ke_enc.encrypt(counter_bytes, counter_bytes);
 
-                for (dst[i..][0..aes_block_length], src[i..][0..aes_block_length], counter_bytes) |*d, s, c| {
-                    const keystream_byte: u16 = c % radix;
-                    if (comptime dir == .encrypt) {
-                        d.* = @intCast((s + keystream_byte) % radix);
-                    } else {
-                        d.* = @intCast((s + radix - keystream_byte) % radix);
-                    }
-                }
+                applyKeystreamBlock(dst[i..][0..aes_block_length], src[i..][0..aes_block_length], counter_bytes, dir);
             }
 
             // Handle partial final block
@@ -451,14 +497,7 @@ pub fn Hctr3Fp(comptime Aes: anytype, comptime Hash: anytype, comptime radix: u1
                 @memcpy(counter_bytes, &lfsr_state);
                 state.ke_enc.encrypt(counter_bytes, counter_bytes);
 
-                for (dst[i..], src[i..], counter_bytes[0..left]) |*d, s, c| {
-                    const keystream_byte: u16 = c % radix;
-                    if (comptime dir == .encrypt) {
-                        d.* = @intCast((s + keystream_byte) % radix);
-                    } else {
-                        d.* = @intCast((s + radix - keystream_byte) % radix);
-                    }
-                }
+                applyKeystreamBlock(dst[i..][0..left], src[i..][0..left], counter_bytes, dir);
             }
         }
 

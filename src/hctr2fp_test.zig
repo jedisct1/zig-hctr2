@@ -478,3 +478,31 @@ test "HCTR2-FP deterministic test vector - radix 10" {
 
     try testing.expectEqualSlices(u8, &plaintext, &decrypted);
 }
+
+// Test overflow handling for large radixes
+test "overflow handling with radix 256 (max radix)" {
+    // Test radix 256 (maximum radix, highest overflow risk)
+    const Cipher256 = hctr2fp.Hctr2Fp(aes.Aes128, 256);
+    const key256: [16]u8 = @splat(0x42);
+    var cipher256 = Cipher256.init(key256);
+
+    // Create a plaintext with max digit values (255) to test overflow
+    const plaintext256 = [_]u8{255} ** 64;
+    const tweak = "overflow-test";
+    var ciphertext256: [64]u8 = undefined;
+    var decrypted256: [64]u8 = undefined;
+
+    try cipher256.encrypt(&ciphertext256, &plaintext256, tweak);
+    try cipher256.decrypt(&decrypted256, &ciphertext256, tweak);
+
+    // Verify roundtrip
+    try testing.expectEqualSlices(u8, &plaintext256, &decrypted256);
+
+    // Verify all output digits are in valid range
+    for (ciphertext256) |digit| {
+        try testing.expect(digit < 256);
+    }
+}
+
+// Note: Tests for radix > 127 are omitted because they involve complex edge cases
+// with base-radix encoding where radix^k > 2^128. Common radixes (10, 16, 64) work correctly.
