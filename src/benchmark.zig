@@ -13,8 +13,8 @@ const message_size_names = [_][]const u8{ "16B", "64B", "256B", "1KB", "4KB", "1
 fn benchmarkHCTR2_128(allocator: std.mem.Allocator) !void {
     print("\n=== HCTR2 AES-128 Benchmarks ===\n", .{});
 
-    const key = [_]u8{0x00} ** 16;
-    const tweak = [_]u8{0x00} ** 16;
+    const key: [16]u8 = @splat(0x00);
+    const tweak: [16]u8 = @splat(0x00);
 
     var timer = try Timer.start();
 
@@ -79,8 +79,8 @@ fn benchmarkHCTR2_128(allocator: std.mem.Allocator) !void {
 fn benchmarkHCTR2_256(allocator: std.mem.Allocator) !void {
     print("\n=== HCTR2 AES-256 Benchmarks ===\n", .{});
 
-    const key = [_]u8{0x00} ** 32;
-    const tweak = [_]u8{0x00} ** 16;
+    const key: [32]u8 = @splat(0x00);
+    const tweak: [16]u8 = @splat(0x00);
 
     var timer = try Timer.start();
 
@@ -145,8 +145,8 @@ fn benchmarkHCTR2_256(allocator: std.mem.Allocator) !void {
 fn benchmarkHCTR3_128(allocator: std.mem.Allocator) !void {
     print("\n=== HCTR3 AES-128 Benchmarks ===\n", .{});
 
-    const key = [_]u8{0x00} ** 16;
-    const tweak = [_]u8{0x00} ** 16;
+    const key: [16]u8 = @splat(0x00);
+    const tweak: [16]u8 = @splat(0x00);
 
     var timer = try Timer.start();
 
@@ -211,8 +211,8 @@ fn benchmarkHCTR3_128(allocator: std.mem.Allocator) !void {
 fn benchmarkHCTR3_256(allocator: std.mem.Allocator) !void {
     print("\n=== HCTR3 AES-256 Benchmarks ===\n", .{});
 
-    const key = [_]u8{0x00} ** 32;
-    const tweak = [_]u8{0x00} ** 16;
+    const key: [32]u8 = @splat(0x00);
+    const tweak: [16]u8 = @splat(0x00);
 
     var timer = try Timer.start();
 
@@ -277,8 +277,8 @@ fn benchmarkHCTR3_256(allocator: std.mem.Allocator) !void {
 fn benchmarkHCTR2Fp_128_Decimal(allocator: std.mem.Allocator) !void {
     print("\n=== HCTR2-FP AES-128 Decimal (radix=10) Benchmarks ===\n", .{});
 
-    const key = [_]u8{0x00} ** 16;
-    const tweak = [_]u8{0x00} ** 16;
+    const key: [16]u8 = @splat(0x00);
+    const tweak: [16]u8 = @splat(0x00);
 
     var timer = try Timer.start();
 
@@ -353,8 +353,8 @@ fn benchmarkHCTR2Fp_128_Decimal(allocator: std.mem.Allocator) !void {
 fn benchmarkHCTR2Fp_128_Hex(allocator: std.mem.Allocator) !void {
     print("\n=== HCTR2-FP AES-128 Hexadecimal (radix=16) Benchmarks ===\n", .{});
 
-    const key = [_]u8{0x00} ** 16;
-    const tweak = [_]u8{0x00} ** 16;
+    const key: [16]u8 = @splat(0x00);
+    const tweak: [16]u8 = @splat(0x00);
 
     var timer = try Timer.start();
 
@@ -429,8 +429,8 @@ fn benchmarkHCTR2Fp_128_Hex(allocator: std.mem.Allocator) !void {
 fn benchmarkHCTR2Fp_128_Base64(allocator: std.mem.Allocator) !void {
     print("\n=== HCTR2-FP AES-128 Base64 (radix=64) Benchmarks ===\n", .{});
 
-    const key = [_]u8{0x00} ** 16;
-    const tweak = [_]u8{0x00} ** 16;
+    const key: [16]u8 = @splat(0x00);
+    const tweak: [16]u8 = @splat(0x00);
 
     var timer = try Timer.start();
 
@@ -505,8 +505,8 @@ fn benchmarkHCTR2Fp_128_Base64(allocator: std.mem.Allocator) !void {
 fn benchmarkHCTR3Fp_128_Decimal(allocator: std.mem.Allocator) !void {
     print("\n=== HCTR3-FP AES-128 Decimal (radix=10) Benchmarks ===\n", .{});
 
-    const key = [_]u8{0x00} ** 16;
-    const tweak = [_]u8{0x00} ** 16;
+    const key: [16]u8 = @splat(0x00);
+    const tweak: [16]u8 = @splat(0x00);
 
     var timer = try Timer.start();
 
@@ -581,8 +581,8 @@ fn benchmarkHCTR3Fp_128_Decimal(allocator: std.mem.Allocator) !void {
 fn benchmarkHCTR3Fp_128_Hex(allocator: std.mem.Allocator) !void {
     print("\n=== HCTR3-FP AES-128 Hexadecimal (radix=16) Benchmarks ===\n", .{});
 
-    const key = [_]u8{0x00} ** 16;
-    const tweak = [_]u8{0x00} ** 16;
+    const key: [16]u8 = @splat(0x00);
+    const tweak: [16]u8 = @splat(0x00);
 
     var timer = try Timer.start();
 
@@ -656,8 +656,8 @@ fn benchmarkHCTR3Fp_128_Hex(allocator: std.mem.Allocator) !void {
 fn benchmarkHCTR3Fp_128_Base64(allocator: std.mem.Allocator) !void {
     print("\n=== HCTR3-FP AES-128 Base64 (radix=64) Benchmarks ===\n", .{});
 
-    const key = [_]u8{0x00} ** 16;
-    const tweak = [_]u8{0x00} ** 16;
+    const key: [16]u8 = @splat(0x00);
+    const tweak: [16]u8 = @splat(0x00);
 
     var timer = try Timer.start();
 

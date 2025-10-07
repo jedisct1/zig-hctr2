@@ -177,7 +177,7 @@ pub fn Hctr3Fp(comptime Aes: anytype, comptime Hash: anytype, comptime radix: u1
             const ks_dec = AesDecryptCtx.initFromEnc(ks_enc);
 
             // Derive Ke (authentication key)
-            var ke_bytes: [aes_block_length]u8 = [_]u8{0} ** aes_block_length;
+            var ke_bytes: [aes_block_length]u8 = @splat(0);
             ks_enc.encrypt(&ke_bytes, &ke_bytes);
 
             // Handle different key sizes
@@ -187,7 +187,7 @@ pub fn Hctr3Fp(comptime Aes: anytype, comptime Hash: anytype, comptime radix: u1
             } else {
                 // For larger keys, we need multiple blocks
                 @memcpy(ke_key[0..aes_block_length], &ke_bytes);
-                var extra_block: [aes_block_length]u8 = [_]u8{1} ** aes_block_length;
+                var extra_block: [aes_block_length]u8 = @splat(1);
                 ks_enc.encrypt(&extra_block, &extra_block);
                 @memcpy(ke_key[aes_block_length..], extra_block[0..(key_length - aes_block_length)]);
             }
@@ -196,10 +196,10 @@ pub fn Hctr3Fp(comptime Aes: anytype, comptime Hash: anytype, comptime radix: u1
             const ke_dec = AesDecryptCtx.initFromEnc(ke_enc);
 
             // Derive Kh and L using ke
-            var kh_bytes: [aes_block_length]u8 = [_]u8{0} ** aes_block_length;
+            var kh_bytes: [aes_block_length]u8 = @splat(0);
             ke_enc.encrypt(&kh_bytes, &kh_bytes);
 
-            var l_bytes: [aes_block_length]u8 = [_]u8{0} ** (aes_block_length - 1) ++ [_]u8{1};
+            var l_bytes: [aes_block_length]u8 = @as([aes_block_length - 1]u8, @splat(0)) ++ [_]u8{1};
             ke_enc.encrypt(&l_bytes, &l_bytes);
 
             const poly = Polyval.init(&kh_bytes);
@@ -283,7 +283,7 @@ pub fn Hctr3Fp(comptime Aes: anytype, comptime Hash: anytype, comptime radix: u1
             }
 
             // Step 2: Process with POLYVAL
-            var block_bytes = [_]u8{0} ** aes_block_length;
+            var block_bytes: [aes_block_length]u8 = @splat(0);
             const tweak_len_bits = tweak.len * 8;
             const tweak_len_bytes = if (tail.len % aes_block_length == 0) 2 * tweak_len_bits + 2 else 2 * tweak_len_bits + 3;
             mem.writeInt(u128, &block_bytes, tweak_len_bytes, .little);
@@ -384,7 +384,7 @@ pub fn Hctr3Fp(comptime Aes: anytype, comptime Hash: anytype, comptime radix: u1
             poly.update(msg);
             const pad_len = (0 -% msg.len) % hash_block_length;
             if (pad_len > 0) {
-                const pad = [_]u8{1} ++ [_]u8{0} ** (hash_block_length - 1);
+                const pad = [_]u8{1} ++ @as([hash_block_length - 1]u8, @splat(0));
                 poly.update(pad[0..pad_len]);
             }
             var hh: [Polyval.mac_length]u8 = undefined;

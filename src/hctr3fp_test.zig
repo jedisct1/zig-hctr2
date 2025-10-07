@@ -56,7 +56,7 @@ test "HCTR3-FP LFSR next state - 128-bit" {
     const Cipher = hctr3fp.Hctr3Fp_128_Decimal;
 
     // Test that LFSR produces different states
-    var state = [_]u8{1} ** 16;
+    var state: [16]u8 = @splat(1);
     const state2 = Cipher.lfsr_next(state);
     const state3 = Cipher.lfsr_next(state2);
 
@@ -66,7 +66,7 @@ test "HCTR3-FP LFSR next state - 128-bit" {
     try testing.expect(!std.mem.eql(u8, &state, &state3));
 
     // Test all-zero state (should produce non-zero)
-    const zero_state = [_]u8{0} ** 16;
+    const zero_state: [16]u8 = @splat(0);
     const next_zero = Cipher.lfsr_next(zero_state);
     try testing.expectEqualSlices(u8, &zero_state, &next_zero); // LFSR with all-zero input stays zero
 }
@@ -75,7 +75,7 @@ test "HCTR3-FP LFSR next state - 256-bit" {
     const Cipher = hctr3fp.Hctr3Fp_256_Decimal;
 
     // Test that LFSR produces different states
-    var state = [_]u8{1} ** 32;
+    var state: [32]u8 = @splat(1);
     const state2 = Cipher.lfsr_next(state);
     const state3 = Cipher.lfsr_next(state2);
 
@@ -88,7 +88,7 @@ test "HCTR3-FP LFSR next state - 256-bit" {
 // Encryption/decryption round-trip tests
 test "HCTR3-FP encrypt/decrypt round-trip - radix 10, minimum length" {
     const Cipher = hctr3fp.Hctr3Fp_128_Decimal;
-    const key = [_]u8{0x42} ** 16;
+    const key: [16]u8 = @splat(0x42);
     var cipher = Cipher.init(key);
 
     const first_len = Cipher.first_block_length;
@@ -115,7 +115,7 @@ test "HCTR3-FP encrypt/decrypt round-trip - radix 10, minimum length" {
 
 test "HCTR3-FP encrypt/decrypt round-trip - radix 10, with tail" {
     const Cipher = hctr3fp.Hctr3Fp_128_Decimal;
-    const key = [_]u8{0x99} ** 16;
+    const key: [16]u8 = @splat(0x99);
     var cipher = Cipher.init(key);
 
     const first_len = Cipher.first_block_length;
@@ -153,7 +153,7 @@ test "HCTR3-FP encrypt/decrypt round-trip - radix 10, with tail" {
 
 test "HCTR3-FP encrypt/decrypt round-trip - radix 16" {
     const Cipher = hctr3fp.Hctr3Fp_128_Hex;
-    const key = [_]u8{0x11} ** 16;
+    const key: [16]u8 = @splat(0x11);
     var cipher = Cipher.init(key);
 
     const first_len = Cipher.first_block_length;
@@ -185,7 +185,7 @@ test "HCTR3-FP encrypt/decrypt round-trip - radix 16" {
 
 test "HCTR3-FP encrypt/decrypt round-trip - radix 64" {
     const Cipher = hctr3fp.Hctr3Fp_128_Base64;
-    const key = [_]u8{0xAA} ** 16;
+    const key: [16]u8 = @splat(0xAA);
     var cipher = Cipher.init(key);
 
     const first_len = Cipher.first_block_length;
@@ -218,7 +218,7 @@ test "HCTR3-FP encrypt/decrypt round-trip - radix 64" {
 
 test "HCTR3-FP AES-256 variant - radix 10" {
     const Cipher = hctr3fp.Hctr3Fp_256_Decimal;
-    const key = [_]u8{0x33} ** 32;
+    const key: [32]u8 = @splat(0x33);
     var cipher = Cipher.init(key);
 
     const first_len = Cipher.first_block_length;
@@ -251,7 +251,7 @@ test "HCTR3-FP AES-256 variant - radix 10" {
 
 test "HCTR3-FP different tweaks produce different ciphertexts" {
     const Cipher = hctr3fp.Hctr3Fp_128_Decimal;
-    const key = [_]u8{0x55} ** 16;
+    const key: [16]u8 = @splat(0x55);
     var cipher = Cipher.init(key);
 
     const first_len = Cipher.first_block_length;
@@ -280,8 +280,8 @@ test "HCTR3-FP different tweaks produce different ciphertexts" {
 test "HCTR3-FP different keys produce different ciphertexts" {
     const Cipher = hctr3fp.Hctr3Fp_128_Decimal;
 
-    const key1 = [_]u8{0x01} ** 16;
-    const key2 = [_]u8{0x02} ** 16;
+    const key1: [16]u8 = @splat(0x01);
+    const key2: [16]u8 = @splat(0x02);
     var cipher1 = Cipher.init(key1);
     var cipher2 = Cipher.init(key2);
 
@@ -311,7 +311,7 @@ test "HCTR3-FP different keys produce different ciphertexts" {
 
 test "HCTR3-FP long tweak handling" {
     const Cipher = hctr3fp.Hctr3Fp_128_Hex;
-    const key = [_]u8{0xBB} ** 16;
+    const key: [16]u8 = @splat(0xBB);
     var cipher = Cipher.init(key);
 
     const first_len = Cipher.first_block_length;
@@ -350,7 +350,7 @@ test "HCTR3-FP long tweak handling" {
 
 test "HCTR3-FP error on input too short" {
     const Cipher = hctr3fp.Hctr3Fp_128_Decimal;
-    const key = [_]u8{0x42} ** 16;
+    const key: [16]u8 = @splat(0x42);
     var cipher = Cipher.init(key);
 
     const short_message = [_]u8{ 1, 2, 3, 4, 5 }; // Much shorter than first_block_length
@@ -362,7 +362,7 @@ test "HCTR3-FP error on input too short" {
 
 test "HCTR3-FP error on invalid digit in input" {
     const Cipher = hctr3fp.Hctr3Fp_128_Decimal;
-    const key = [_]u8{0x42} ** 16;
+    const key: [16]u8 = @splat(0x42);
     var cipher = Cipher.init(key);
 
     var plaintext: [50]u8 = undefined;
@@ -379,7 +379,7 @@ test "HCTR3-FP error on invalid digit in input" {
 
 test "HCTR3-FP various message lengths - radix 10" {
     const Cipher = hctr3fp.Hctr3Fp_128_Decimal;
-    const key = [_]u8{0x77} ** 16;
+    const key: [16]u8 = @splat(0x77);
     var cipher = Cipher.init(key);
 
     const first_len = Cipher.first_block_length;
@@ -456,7 +456,7 @@ test "HCTR3-FP deterministic test vector - radix 10" {
 
 test "HCTR3-FP partial block tail handling" {
     const Cipher = hctr3fp.Hctr3Fp_128_Hex;
-    const key = [_]u8{0xCC} ** 16;
+    const key: [16]u8 = @splat(0xCC);
     var cipher = Cipher.init(key);
 
     const first_len = Cipher.first_block_length;
@@ -498,7 +498,7 @@ test "HCTR3-FP vs HCTR2-FP difference" {
     const Hctr2Fp = @import("hctr2fp.zig").Hctr2Fp_128_Decimal;
     const Hctr3Fp = hctr3fp.Hctr3Fp_128_Decimal;
 
-    const key = [_]u8{0x88} ** 16;
+    const key: [16]u8 = @splat(0x88);
     var cipher2 = Hctr2Fp.init(key);
     var cipher3 = Hctr3Fp.init(key);
 

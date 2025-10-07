@@ -148,7 +148,7 @@ test "base conversion round-trip - radix 256" {
 
 test "base conversion - invalid digit detection" {
     const radix = 10;
-    var buffer = [_]u8{0} ** 39;
+    var buffer: [39]u8 = @splat(0);
     buffer[10] = 10; // Invalid digit (>= radix)
 
     const result = hctr2fp.decodeBaseRadix(&buffer, radix);
@@ -158,7 +158,7 @@ test "base conversion - invalid digit detection" {
 // Encryption/decryption round-trip tests
 test "HCTR2-FP encrypt/decrypt round-trip - radix 10, minimum length" {
     const Cipher = hctr2fp.Hctr2Fp_128_Decimal;
-    const key = [_]u8{0x42} ** 16;
+    const key: [16]u8 = @splat(0x42);
     var cipher = Cipher.init(key);
 
     const first_len = Cipher.first_block_length;
@@ -185,7 +185,7 @@ test "HCTR2-FP encrypt/decrypt round-trip - radix 10, minimum length" {
 
 test "HCTR2-FP encrypt/decrypt round-trip - radix 10, with tail" {
     const Cipher = hctr2fp.Hctr2Fp_128_Decimal;
-    const key = [_]u8{0x99} ** 16;
+    const key: [16]u8 = @splat(0x99);
     var cipher = Cipher.init(key);
 
     const first_len = Cipher.first_block_length;
@@ -223,7 +223,7 @@ test "HCTR2-FP encrypt/decrypt round-trip - radix 10, with tail" {
 
 test "HCTR2-FP encrypt/decrypt round-trip - radix 16" {
     const Cipher = hctr2fp.Hctr2Fp_128_Hex;
-    const key = [_]u8{0x11} ** 16;
+    const key: [16]u8 = @splat(0x11);
     var cipher = Cipher.init(key);
 
     const first_len = Cipher.first_block_length;
@@ -255,7 +255,7 @@ test "HCTR2-FP encrypt/decrypt round-trip - radix 16" {
 
 test "HCTR2-FP encrypt/decrypt round-trip - radix 64" {
     const Cipher = hctr2fp.Hctr2Fp_128_Base64;
-    const key = [_]u8{0xAA} ** 16;
+    const key: [16]u8 = @splat(0xAA);
     var cipher = Cipher.init(key);
 
     const first_len = Cipher.first_block_length;
@@ -288,7 +288,7 @@ test "HCTR2-FP encrypt/decrypt round-trip - radix 64" {
 
 test "HCTR2-FP different tweaks produce different ciphertexts" {
     const Cipher = hctr2fp.Hctr2Fp_128_Decimal;
-    const key = [_]u8{0x55} ** 16;
+    const key: [16]u8 = @splat(0x55);
     var cipher = Cipher.init(key);
 
     const first_len = Cipher.first_block_length;
@@ -317,8 +317,8 @@ test "HCTR2-FP different tweaks produce different ciphertexts" {
 test "HCTR2-FP different keys produce different ciphertexts" {
     const Cipher = hctr2fp.Hctr2Fp_128_Decimal;
 
-    const key1 = [_]u8{0x01} ** 16;
-    const key2 = [_]u8{0x02} ** 16;
+    const key1: [16]u8 = @splat(0x01);
+    const key2: [16]u8 = @splat(0x02);
     var cipher1 = Cipher.init(key1);
     var cipher2 = Cipher.init(key2);
 
@@ -348,7 +348,7 @@ test "HCTR2-FP different keys produce different ciphertexts" {
 
 test "HCTR2-FP error on input too short" {
     const Cipher = hctr2fp.Hctr2Fp_128_Decimal;
-    const key = [_]u8{0x42} ** 16;
+    const key: [16]u8 = @splat(0x42);
     var cipher = Cipher.init(key);
 
     const short_message = [_]u8{ 1, 2, 3, 4, 5 }; // Much shorter than first_block_length
@@ -360,7 +360,7 @@ test "HCTR2-FP error on input too short" {
 
 test "HCTR2-FP error on invalid digit in input" {
     const Cipher = hctr2fp.Hctr2Fp_128_Decimal;
-    const key = [_]u8{0x42} ** 16;
+    const key: [16]u8 = @splat(0x42);
     var cipher = Cipher.init(key);
 
     var plaintext: [50]u8 = undefined;
@@ -380,7 +380,7 @@ test "HCTR2-FP radix 256 compatibility test" {
     // (We can't directly compare without implementing standard HCTR2 import,
     // but we can verify basic properties)
     const Cipher = hctr2fp.Hctr2Fp(aes.Aes128, 256);
-    const key = [_]u8{0x42} ** 16;
+    const key: [16]u8 = @splat(0x42);
     var cipher = Cipher.init(key);
 
     // Verify first_block_length is 16 (standard AES block size)
@@ -403,7 +403,7 @@ test "HCTR2-FP radix 256 compatibility test" {
 
 test "HCTR2-FP various message lengths - radix 10" {
     const Cipher = hctr2fp.Hctr2Fp_128_Decimal;
-    const key = [_]u8{0x77} ** 16;
+    const key: [16]u8 = @splat(0x77);
     var cipher = Cipher.init(key);
 
     const first_len = Cipher.first_block_length;

@@ -92,7 +92,7 @@ const hctr2 = @import("hctr2");
 
 pub fn main() !void {
     // Initialize cipher with a 128-bit key
-    const key = [_]u8{0x00} ** 16;
+    const key: [16]u8 = @splat(0x00);
     const cipher = hctr2.Hctr2_128.init(key);
 
     // Encrypt a message
@@ -115,7 +115,7 @@ const hctr2 = @import("hctr2");
 
 pub fn main() !void {
     // Initialize with AES-256
-    const key = [_]u8{0x00} ** 32;
+    const key: [32]u8 = @splat(0x00);
     const cipher = hctr2.Hctr3_256.init(key);
 
     const plaintext = "Sensitive data here!";
@@ -133,7 +133,7 @@ pub fn main() !void {
 const hctr2 = @import("hctr2");
 
 pub fn main() !void {
-    const key = [_]u8{0x00} ** 16;
+    const key: [16]u8 = @splat(0x00);
     const cipher = hctr2.Hctr2Fp_128_Decimal.init(key);
 
     // Encrypt a credit card number (all digits remain digits)
@@ -158,7 +158,7 @@ const std = @import("std");
 pub fn main() !void {
     // Create a base-36 cipher (0-9, a-z)
     const Cipher = hctr2.Hctr2Fp(std.crypto.core.aes.Aes128, 36);
-    const key = [_]u8{0x00} ** 16;
+    const key: [16]u8 = @splat(0x00);
     const cipher = Cipher.init(key);
 
     // Minimum length depends on radix

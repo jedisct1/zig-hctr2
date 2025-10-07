@@ -68,7 +68,7 @@ pub fn Hctr2(comptime Aes: anytype) type {
             const ks_enc = Aes.initEnc(key);
             const ks_dec = AesDecryptCtx.initFromEnc(ks_enc);
 
-            var block_bytes = [_]u8{0} ** aes_block_length ++ [_]u8{1} ++ [_]u8{0} ** (aes_block_length - 1);
+            var block_bytes = @as([aes_block_length]u8, @splat(0)) ++ [_]u8{1} ++ @as([aes_block_length - 1]u8, @splat(0));
             ks_enc.encryptWide(2, &block_bytes, &block_bytes);
             const h = block_bytes[0..aes_block_length].*;
             const l = block_bytes[aes_block_length..].*;
@@ -121,7 +121,7 @@ pub fn Hctr2(comptime Aes: anytype) type {
             const m = src[0..aes_block_length];
             const n = src[aes_block_length..];
 
-            var block_bytes = [_]u8{0} ** aes_block_length;
+            var block_bytes: [aes_block_length]u8 = @splat(0);
             const tweak_len_bits = tweak.len * 8;
             const tweak_len_bytes = if (n.len % aes_block_length == 0) 2 * tweak_len_bits + 2 else 2 * tweak_len_bits + 3;
             mem.writeInt(u128, &block_bytes, tweak_len_bytes, .little);
@@ -131,7 +131,7 @@ pub fn Hctr2(comptime Aes: anytype) type {
             poly.update(tweak);
             const pad_len = (0 -% tweak.len) % hash_block_length;
             if (pad_len > 0) {
-                const pad = [_]u8{0} ** hash_block_length;
+                const pad: [hash_block_length]u8 = @splat(0);
                 poly.update(pad[0..pad_len]);
             }
 
@@ -170,7 +170,7 @@ pub fn Hctr2(comptime Aes: anytype) type {
             poly.update(msg);
             const pad_len = (0 -% msg.len) % hash_block_length;
             if (pad_len > 0) {
-                const pad = [_]u8{1} ++ [_]u8{0} ** (hash_block_length - 1);
+                const pad = [_]u8{1} ++ @as([hash_block_length - 1]u8, @splat(0));
                 poly.update(pad[0..pad_len]);
             }
             var hh: [Polyval.mac_length]u8 = undefined;

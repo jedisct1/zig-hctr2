@@ -3,7 +3,7 @@ const testing = std.testing;
 const hctr3 = @import("hctr3.zig");
 
 test "HCTR3-128 basic encryption/decryption" {
-    const key = [_]u8{0x01} ** 16;
+    const key: [16]u8 = @splat(0x01);
     const tweak = "test tweak data";
     const plaintext = "Hello, this is a test message that is longer than one block!";
 
@@ -19,7 +19,7 @@ test "HCTR3-128 basic encryption/decryption" {
 }
 
 test "HCTR3-256 basic encryption/decryption" {
-    const key = [_]u8{0x02} ** 32;
+    const key: [32]u8 = @splat(0x02);
     const tweak = "another test tweak";
     const plaintext = "This is another test message for HCTR3-256 with a longer key size!";
 
@@ -35,7 +35,7 @@ test "HCTR3-256 basic encryption/decryption" {
 }
 
 test "HCTR3 with empty tweak" {
-    const key = [_]u8{0x03} ** 16;
+    const key: [16]u8 = @splat(0x03);
     const tweak = "";
     const plaintext = "Test with empty tweak";
 
@@ -51,7 +51,7 @@ test "HCTR3 with empty tweak" {
 }
 
 test "HCTR3 input too short" {
-    const key = [_]u8{0x04} ** 16;
+    const key: [16]u8 = @splat(0x04);
     const tweak = "tweak";
     const plaintext = "short"; // Less than block size
 
@@ -64,7 +64,7 @@ test "HCTR3 input too short" {
 }
 
 test "HCTR3 different tweaks produce different ciphertexts" {
-    const key = [_]u8{0x05} ** 16;
+    const key: [16]u8 = @splat(0x05);
     const tweak1 = "tweak1";
     const tweak2 = "tweak2";
     const plaintext = "Same plaintext for both encryptions";
@@ -82,7 +82,7 @@ test "HCTR3 different tweaks produce different ciphertexts" {
 }
 
 test "HCTR3 large message" {
-    const key = [_]u8{0x06} ** 16;
+    const key: [16]u8 = @splat(0x06);
     const tweak = "large message tweak";
 
     // Create a large message (multiple blocks)
