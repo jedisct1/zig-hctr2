@@ -2,7 +2,7 @@
 
 Pure Zig implementation of HCTR2, HCTR3, and format-preserving variants.
 
-HCTR2 and HCTR3 are length-preserving tweakable wide-block encryption modes, while the format-preserving variants (HCTR2-FP and HCTR3-FP) preserve character sets with minimal expansion.
+HCTR2 and HCTR3 are length-preserving tweakable wide-block encryption modes. The format-preserving variants (HCTR2-FP and HCTR3-FP) are also length-preserving and additionally preserve character sets (e.g., decimal digits remain decimal).
 
 These modes are designed for full-disk encryption, filename encryption, and other applications where nonces and authentication tags would be impractical.
 
@@ -10,7 +10,7 @@ These modes are designed for full-disk encryption, filename encryption, and othe
 
 HCTR2 and HCTR3 are modern tweakable encryption modes that provide the following properties:
 
-- Length-preserving: ciphertext is the same length as plaintext (no expansion)
+- Length-preserving: ciphertext is the same length as plaintext (no expansion beyond a minimum length)
 - Wide-block: changing any single bit of plaintext affects the entire ciphertext
 - Tweakable: supports a public tweak parameter for domain separation
 - No authentication tag or nonce required
@@ -51,13 +51,13 @@ Use the format-preserving variants when you need:
 - Filename encryption where certain characters are forbidden
 - Database encryption where column types must be preserved
 
-Unlike standard HCTR2/HCTR3 which are strictly length-preserving, the format-preserving variants maintain the character set but have minimal expansion due to radix encoding requirements. HCTR2-FP and HCTR3-FP support any radix from 2 to 256. Pre-configured variants are provided for common radixes:
+Like standard HCTR2/HCTR3, the format-preserving variants are length-preserving (no ciphertext expansion). They additionally maintain the character set by operating on digits in a specified radix. HCTR2-FP and HCTR3-FP support any radix from 2 to 256. Pre-configured variants are provided for common radixes:
 
 - Decimal (radix 10): useful for credit cards, IDs, phone numbers
 - Hexadecimal (radix 16): useful for hex-encoded data
 - Base64 (radix 64): useful for URL-safe encryption
 
-Note that format-preserving modes have higher minimum message lengths (e.g., 39 bytes for decimal) compared to standard HCTR2/HCTR3 (16 bytes minimum).
+Note that format-preserving modes have higher minimum message lengths (e.g., 39 digits for decimal, 32 for hex, 22 for base64) compared to standard HCTR2/HCTR3 (16 bytes minimum).
 
 ## Installation
 
@@ -137,7 +137,7 @@ pub fn main() !void {
     const cipher = hctr2.Hctr2Fp_128_Decimal.init(key);
 
     // Encrypt a credit card number (all digits remain digits)
-    const plaintext = "1234567890123456789012345678901234567890"; // Min 39 bytes for decimal
+    const plaintext = "1234567890123456789012345678901234567890"; // Min 39 digits for decimal
     const tweak = "user-cc-field";
     var ciphertext: [plaintext.len]u8 = undefined;
 
@@ -176,9 +176,11 @@ HCTR2 and HCTR3 provide confidentiality only, not authenticity. They do not dete
 ### Minimum message lengths
 
 - HCTR2/HCTR3: 16 bytes minimum
-- HCTR2-FP/HCTR3-FP: depends on radix (39 digits for decimal, 32 for hex, 22 for base64)
+- HCTR2-FP/HCTR3-FP: depends on radix (e.g., 39 digits for radix-10, 32 digits for radix-16, 22 digits for radix-64)
 
 Messages shorter than the minimum will return `error.InputTooShort`.
+
+Important: Format-preserving modes are length-preserving (no expansion). Input length in digits equals output length in digits.
 
 ### Key management
 
