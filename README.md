@@ -66,7 +66,7 @@ Add to your `build.zig.zon`:
 ```zig
 .dependencies = .{
     .hctr2 = .{
-        .url = "https://github.com/yourusername/zig-hctr2/archive/refs/tags/v0.1.2.tar.gz",
+        .url = "https://github.com/yourusername/zig-hctr2/archive/refs/tags/v0.1.3.tar.gz",
         .hash = "...",
     },
 },
