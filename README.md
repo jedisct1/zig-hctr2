@@ -59,6 +59,57 @@ Like standard HCTR2/HCTR3, the format-preserving variants are length-preserving 
 
 Note that format-preserving modes have higher minimum message lengths (e.g., 39 digits for decimal, 32 for hex, 22 for base64) compared to standard HCTR2/HCTR3 (16 bytes minimum).
 
+### Common Radix Values
+
+The following table shows common radix values for different use cases:
+
+| Radix | Alphabet               | Use Cases                                | Notes                                  |
+| ----- | ---------------------- | ---------------------------------------- | -------------------------------------- |
+| 2     | `01`                   | Binary data, bit flags                   | Maximum length, minimal alphabet       |
+| 4     | `ACGT` or `0123`       | DNA sequences, quaternary data           | Bioinformatics, compact binary         |
+| 8     | `0-7`                  | Octal numbers                            | Unix file permissions, legacy systems  |
+| 10    | `0-9`                  | Credit cards, phone numbers, numeric IDs | Pre-configured Human-readable numbers  |
+| 16    | `0-9A-F`               | Hex strings, hashes, MAC addresses       | Pre-configured Common in computing     |
+| 26    | `A-Z`                  | Alphabetic codes, license keys           | Case-insensitive text                  |
+| 32    | `A-Z2-7`               | Base32 (RFC 4648), TOTP keys             | No ambiguous chars, 2FA tokens         |
+| 32    | `0-9A-HJKMNP-TV-Z`     | Crockford Base32                         | Human-friendly, excludes I,L,O,U       |
+| 36    | `0-9A-Z`               | Short IDs, URL shorteners                | Case-insensitive, compact              |
+| 58    | `1-9A-HJ-NP-Za-km-z`   | Bitcoin/crypto addresses                 | No confusing chars (0,O,I,l removed)   |
+| 62    | `0-9A-Za-z`            | URL shorteners, compact IDs              | Case-sensitive, very compact           |
+| 63    | `0-9A-Za-z_`           | Programming identifiers                  | Alphanumeric + underscore              |
+| 64    | `A-Za-z0-9+/`          | Base64 encoding, binary data             | Pre-configured Standard Base64         |
+| 64    | `A-Za-z0-9-_`          | URL-safe Base64                          | Web-safe variant, no padding           |
+| 66    | `A-Za-z0-9-._~`        | URL unreserved chars (RFC 3986)          | Safe for URLs without encoding         |
+| 85    | ASCII printable        | Ascii85, binary encoding                 | Compact, printable characters          |
+| 91    | ASCII printable subset | Base91                                   | Very compact binary encoding           |
+| 95    | All printable ASCII    | Full printable character set             | Maximum compactness, may need escaping |
+
+Filesystem-Safe Radixes:
+
+- Radix 62-64: Safe across all major filesystems (Windows, Linux, macOS)
+- Radix 66: URL unreserved characters, safe for both filenames and URLs
+- Avoid characters: `/` (Unix/Linux), `\/:*?"<>|` (Windows), `:` (macOS Finder)
+
+Common Pre-configured Variants:
+
+- `Hctr2Fp_128_Decimal` / `Hctr3Fp_128_Decimal`: Radix 10
+- `Hctr2Fp_128_Hex` / `Hctr3Fp_128_Hex`: Radix 16
+- `Hctr2Fp_128_Base64` / `Hctr3Fp_128_Base64`: Radix 64
+- AES-256 variants also available (e.g., `Hctr2Fp_256_Decimal`)
+
+You can create custom radix variants for any use case:
+
+```zig
+// Base-36 for case-insensitive alphanumeric identifiers
+const Cipher36 = hctr2.Hctr2Fp(std.crypto.core.aes.Aes128, 36);
+
+// Base-58 for cryptocurrency-style addresses
+const Cipher58 = hctr2.Hctr3Fp(std.crypto.core.aes.Aes256, std.crypto.hash.sha2.Sha256, 58);
+
+// Base-62 for compact URL shorteners
+const Cipher62 = hctr2.Hctr2Fp(std.crypto.core.aes.Aes128, 62);
+```
+
 ## Installation
 
 Add to your `build.zig.zon`:
