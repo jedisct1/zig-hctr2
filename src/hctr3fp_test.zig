@@ -353,7 +353,7 @@ test "HCTR3-FP error on input too short" {
     const key = [_]u8{0x42} ** 16;
     var cipher = Cipher.init(key);
 
-    const short_message = [_]u8{1, 2, 3, 4, 5}; // Much shorter than first_block_length
+    const short_message = [_]u8{ 1, 2, 3, 4, 5 }; // Much shorter than first_block_length
     var output: [5]u8 = undefined;
 
     const result = cipher.encrypt(&output, &short_message, "");

@@ -351,7 +351,7 @@ test "HCTR2-FP error on input too short" {
     const key = [_]u8{0x42} ** 16;
     var cipher = Cipher.init(key);
 
-    const short_message = [_]u8{1, 2, 3, 4, 5}; // Much shorter than first_block_length
+    const short_message = [_]u8{ 1, 2, 3, 4, 5 }; // Much shorter than first_block_length
     var output: [5]u8 = undefined;
 
     const result = cipher.encrypt(&output, &short_message, "");
@@ -445,7 +445,7 @@ test "HCTR2-FP various message lengths - radix 10" {
 // Test vector for deterministic verification
 test "HCTR2-FP deterministic test vector - radix 10" {
     const Cipher = hctr2fp.Hctr2Fp_128_Decimal;
-    const key = [_]u8{0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F};
+    const key = [_]u8{ 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F };
     var cipher = Cipher.init(key);
 
     const first_len = Cipher.first_block_length;
