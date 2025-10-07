@@ -5,9 +5,30 @@ const mem = std.mem;
 const assert = std.debug.assert;
 const Polyval = crypto.onetimeauth.Polyval;
 
+/// HCTR2 with AES-128 encryption.
 pub const Hctr2_128 = Hctr2(aes.Aes128);
+
+/// HCTR2 with AES-256 encryption.
 pub const Hctr2_256 = Hctr2(aes.Aes256);
 
+/// HCTR2 (Hash-CTR-Hash) is a length-preserving wide-block tweakable cipher.
+///
+/// HCTR2 provides full-block diffusion: any change to plaintext affects the entire ciphertext.
+/// It requires no nonce or authentication tag, making it suitable for constrained environments.
+///
+/// Construction uses:
+/// - Single encryption key
+/// - Polyval universal hash function
+/// - XCTR mode for wide-block encryption (counter-based)
+///
+/// Security properties:
+/// - Ciphertext length equals plaintext length (no expansion)
+/// - Requires unique (key, tweak) pairs for security
+/// - No authentication - consider AEAD if integrity protection is needed
+/// - Minimum message length: 16 bytes (one AES block)
+///
+/// Type parameters:
+/// - `Aes`: AES variant (Aes128 or Aes256)
 pub fn Hctr2(comptime Aes: anytype) type {
     const AesEncryptCtx = aes.AesEncryptCtx(Aes);
     const AesDecryptCtx = aes.AesDecryptCtx(Aes);
@@ -25,11 +46,24 @@ pub fn Hctr2(comptime Aes: anytype) type {
         h: [Polyval.key_length]u8,
         l: [aes_block_length]u8,
 
+        /// Authentication tag length (0 - HCTR2 is unauthenticated).
         pub const tag_length = 0;
+
+        /// Nonce length (0 - HCTR2 uses tweaks instead).
         pub const nonce_length = 0;
+
+        /// Encryption key length in bytes (16 for AES-128, 32 for AES-256).
         pub const key_length = Aes.key_bits / 8;
+
+        /// AES block length in bytes (always 16).
         pub const block_length = aes_block_length;
 
+        /// Initialize HCTR2 cipher state from an encryption key.
+        ///
+        /// Parameters:
+        /// - `key`: Encryption key (16 bytes for AES-128, 32 bytes for AES-256)
+        ///
+        /// Returns: Initialized cipher state ready for encryption/decryption operations.
         pub fn init(key: [Aes.key_bits / 8]u8) State {
             const ks_enc = Aes.initEnc(key);
             const ks_dec = AesDecryptCtx.initFromEnc(ks_enc);
@@ -51,10 +85,30 @@ pub fn Hctr2(comptime Aes: anytype) type {
 
         const Direction = enum { encrypt, decrypt };
 
+        /// Encrypt plaintext to ciphertext using HCTR2.
+        ///
+        /// Parameters:
+        /// - `state`: Initialized cipher state
+        /// - `ciphertext`: Output buffer (must be same length as plaintext)
+        /// - `plaintext`: Input data to encrypt (minimum 16 bytes)
+        /// - `tweak`: Tweak value for domain separation (can be empty, but must be unique per message with same key)
+        ///
+        /// Returns: `error.InputTooShort` if plaintext is less than 16 bytes.
+        ///
+        /// Security: Never reuse the same (key, tweak) pair for different messages.
         pub fn encrypt(state: *State, ciphertext: []u8, plaintext: []const u8, tweak: []const u8) !void {
             try state.hctr2(ciphertext, plaintext, tweak, .encrypt);
         }
 
+        /// Decrypt ciphertext to plaintext using HCTR2.
+        ///
+        /// Parameters:
+        /// - `state`: Initialized cipher state
+        /// - `plaintext`: Output buffer (must be same length as ciphertext)
+        /// - `ciphertext`: Input data to decrypt (minimum 16 bytes)
+        /// - `tweak`: Tweak value used during encryption
+        ///
+        /// Returns: `error.InputTooShort` if ciphertext is less than 16 bytes.
         pub fn decrypt(state: *State, plaintext: []u8, ciphertext: []const u8, tweak: []const u8) !void {
             try state.hctr2(plaintext, ciphertext, tweak, .decrypt);
         }

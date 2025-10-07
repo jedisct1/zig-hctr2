@@ -5,11 +5,22 @@ const mem = std.mem;
 const assert = std.debug.assert;
 const Polyval = crypto.onetimeauth.Polyval;
 
+/// HCTR3+FP with AES-128 encryption, SHA-256 tweak hashing, and decimal (radix-10) format preservation.
 pub const Hctr3Fp_128_Decimal = Hctr3Fp(aes.Aes128, crypto.hash.sha2.Sha256, 10);
+
+/// HCTR3+FP with AES-256 encryption, SHA-256 tweak hashing, and decimal (radix-10) format preservation.
 pub const Hctr3Fp_256_Decimal = Hctr3Fp(aes.Aes256, crypto.hash.sha2.Sha256, 10);
+
+/// HCTR3+FP with AES-128 encryption, SHA-256 tweak hashing, and hexadecimal (radix-16) format preservation.
 pub const Hctr3Fp_128_Hex = Hctr3Fp(aes.Aes128, crypto.hash.sha2.Sha256, 16);
+
+/// HCTR3+FP with AES-256 encryption, SHA-256 tweak hashing, and hexadecimal (radix-16) format preservation.
 pub const Hctr3Fp_256_Hex = Hctr3Fp(aes.Aes256, crypto.hash.sha2.Sha256, 16);
+
+/// HCTR3+FP with AES-128 encryption, SHA-256 tweak hashing, and base-64 (radix-64) format preservation.
 pub const Hctr3Fp_128_Base64 = Hctr3Fp(aes.Aes128, crypto.hash.sha2.Sha256, 64);
+
+/// HCTR3+FP with AES-256 encryption, SHA-256 tweak hashing, and base-64 (radix-64) format preservation.
 pub const Hctr3Fp_256_Base64 = Hctr3Fp(aes.Aes256, crypto.hash.sha2.Sha256, 64);
 
 /// Compute the minimum number of base-RADIX digits needed to represent 128 bits.
@@ -84,6 +95,36 @@ pub fn decodeBaseRadix(digits: []const u8, comptime radix: u16) !u128 {
     return value;
 }
 
+/// HCTR3+FP (Format-Preserving) combines HCTR3's enhanced security with format preservation.
+///
+/// HCTR3+FP extends HCTR3 with format-preserving encryption, ensuring that ciphertext
+/// consists only of digits in a specified radix (e.g., decimal digits 0-9 for radix-10).
+///
+/// Construction features:
+/// - Two-key construction (encryption key + derived authentication key)
+/// - SHA-256 hashing of tweaks for domain separation
+/// - fpElk mode (Format-Preserving Encrypted LFSR Keystream) - novel combination
+/// - Base-radix encoding for first block
+/// - Modular arithmetic with LFSR-based keystream
+/// - Constant-time LFSR implementation
+///
+/// Use cases:
+/// - Encrypting credit card numbers with enhanced security (decimal)
+/// - Encrypting sensitive alphanumeric identifiers (hexadecimal or custom radix)
+/// - Systems requiring both format preservation and strong security bounds
+///
+/// Security properties:
+/// - Ciphertext length equals plaintext length
+/// - All ciphertext digits are in range [0, radix)
+/// - Stronger security bounds than HCTR2+FP
+/// - Requires unique (key, tweak) pairs for security
+/// - No authentication - consider AEAD if integrity protection is needed
+/// - Minimum message length depends on radix (e.g., 39 digits for decimal)
+///
+/// Type parameters:
+/// - `Aes`: AES variant (Aes128 or Aes256)
+/// - `Hash`: Hash function for tweak processing (typically SHA-256)
+/// - `radix`: Base for digit representation (2-256)
 pub fn Hctr3Fp(comptime Aes: anytype, comptime Hash: anytype, comptime radix: u16) type {
     const AesEncryptCtx = aes.AesEncryptCtx(Aes);
     const AesDecryptCtx = aes.AesDecryptCtx(Aes);
@@ -105,13 +146,32 @@ pub fn Hctr3Fp(comptime Aes: anytype, comptime Hash: anytype, comptime radix: u1
         h: [Polyval.key_length]u8,
         l: [aes_block_length]u8,
 
+        /// Authentication tag length (0 - HCTR3+FP is unauthenticated).
         pub const tag_length = 0;
+
+        /// Nonce length (0 - HCTR3+FP uses tweaks instead).
         pub const nonce_length = 0;
+
+        /// Encryption key length in bytes (16 for AES-128, 32 for AES-256).
         pub const key_length = Aes.key_bits / 8;
+
+        /// First block length in digits (radix-dependent, e.g., 39 for decimal).
         pub const first_block_length = first_block_len;
+
+        /// Minimum message length in digits (same as first_block_length).
         pub const min_message_length = first_block_len;
+
+        /// AES block length in bytes (always 16).
         pub const block_length = aes_block_length;
 
+        /// Initialize HCTR3+FP cipher state from an encryption key.
+        ///
+        /// Derives a secondary authentication key (Ke) from the encryption key for the two-key construction.
+        ///
+        /// Parameters:
+        /// - `key`: Encryption key (16 bytes for AES-128, 32 bytes for AES-256)
+        ///
+        /// Returns: Initialized cipher state ready for encryption/decryption operations.
         pub fn init(key: [Aes.key_bits / 8]u8) State {
             const ks_enc = Aes.initEnc(key);
             const ks_dec = AesDecryptCtx.initFromEnc(ks_enc);
@@ -157,10 +217,38 @@ pub fn Hctr3Fp(comptime Aes: anytype, comptime Hash: anytype, comptime radix: u1
 
         const Direction = enum { encrypt, decrypt };
 
+        /// Encrypt plaintext to ciphertext using HCTR3+FP.
+        ///
+        /// All input digits must be in range [0, radix). Output will also be in this range.
+        ///
+        /// Parameters:
+        /// - `state`: Initialized cipher state
+        /// - `ciphertext`: Output buffer (must be same length as plaintext)
+        /// - `plaintext`: Input data to encrypt (minimum length: first_block_length)
+        /// - `tweak`: Tweak value for domain separation (can be empty, but must be unique per message with same key)
+        ///
+        /// Returns:
+        /// - `error.InputTooShort` if plaintext is less than first_block_length
+        /// - `error.InvalidDigit` if any digit >= radix
+        ///
+        /// Security: Never reuse the same (key, tweak) pair for different messages.
         pub fn encrypt(state: *State, ciphertext: []u8, plaintext: []const u8, tweak: []const u8) !void {
             try state.hctr3fp(ciphertext, plaintext, tweak, .encrypt);
         }
 
+        /// Decrypt ciphertext to plaintext using HCTR3+FP.
+        ///
+        /// All input digits must be in range [0, radix). Output will also be in this range.
+        ///
+        /// Parameters:
+        /// - `state`: Initialized cipher state
+        /// - `plaintext`: Output buffer (must be same length as ciphertext)
+        /// - `ciphertext`: Input data to decrypt (minimum length: first_block_length)
+        /// - `tweak`: Tweak value used during encryption
+        ///
+        /// Returns:
+        /// - `error.InputTooShort` if ciphertext is less than first_block_length
+        /// - `error.InvalidDigit` if any digit >= radix
         pub fn decrypt(state: *State, plaintext: []u8, ciphertext: []const u8, tweak: []const u8) !void {
             try state.hctr3fp(plaintext, ciphertext, tweak, .decrypt);
         }
@@ -374,8 +462,18 @@ pub fn Hctr3Fp(comptime Aes: anytype, comptime Hash: anytype, comptime radix: u1
             }
         }
 
-        /// LFSR next state function (copied from hctr3.zig)
-        /// Constant-time implementation to avoid timing side-channels
+        /// Linear Feedback Shift Register (LFSR) next state function.
+        ///
+        /// Computes the next LFSR state using Galois configuration with primitive polynomials:
+        /// - 128-bit: x^128 + x^7 + x^2 + x + 1
+        /// - 256-bit: x^256 + x^254 + x^251 + x^246 + 1
+        ///
+        /// Implementation is constant-time to prevent timing side-channel attacks.
+        ///
+        /// Parameters:
+        /// - `state`: Current LFSR state (16 bytes for AES-128, 32 bytes for AES-256)
+        ///
+        /// Returns: Next LFSR state.
         pub fn lfsr_next(state: [aes_block_length]u8) [aes_block_length]u8 {
             var result = state;
 

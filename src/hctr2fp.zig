@@ -5,11 +5,22 @@ const mem = std.mem;
 const assert = std.debug.assert;
 const Polyval = crypto.onetimeauth.Polyval;
 
+/// HCTR2+FP with AES-128 encryption and decimal (radix-10) format preservation.
 pub const Hctr2Fp_128_Decimal = Hctr2Fp(aes.Aes128, 10);
+
+/// HCTR2+FP with AES-256 encryption and decimal (radix-10) format preservation.
 pub const Hctr2Fp_256_Decimal = Hctr2Fp(aes.Aes256, 10);
+
+/// HCTR2+FP with AES-128 encryption and hexadecimal (radix-16) format preservation.
 pub const Hctr2Fp_128_Hex = Hctr2Fp(aes.Aes128, 16);
+
+/// HCTR2+FP with AES-256 encryption and hexadecimal (radix-16) format preservation.
 pub const Hctr2Fp_256_Hex = Hctr2Fp(aes.Aes256, 16);
+
+/// HCTR2+FP with AES-128 encryption and base-64 (radix-64) format preservation.
 pub const Hctr2Fp_128_Base64 = Hctr2Fp(aes.Aes128, 64);
+
+/// HCTR2+FP with AES-256 encryption and base-64 (radix-64) format preservation.
 pub const Hctr2Fp_256_Base64 = Hctr2Fp(aes.Aes256, 64);
 
 /// Compute the minimum number of base-RADIX digits needed to represent 128 bits.
@@ -84,6 +95,31 @@ pub fn decodeBaseRadix(digits: []const u8, comptime radix: u16) !u128 {
     return value;
 }
 
+/// HCTR2+FP (Format-Preserving) is a variant of HCTR2 that preserves the format of the input.
+///
+/// While standard HCTR2 operates on arbitrary bytes, HCTR2+FP ensures that ciphertext
+/// consists only of digits in a specified radix (e.g., decimal digits 0-9 for radix-10).
+///
+/// Construction differences from HCTR2:
+/// - First block uses base-radix encoding (variable length based on radix)
+/// - Modular arithmetic instead of XOR for tail encryption
+/// - Input validation to ensure all digits are in valid range [0, radix)
+///
+/// Use cases:
+/// - Encrypting credit card numbers (decimal)
+/// - Encrypting alphanumeric identifiers (hexadecimal or custom radix)
+/// - Systems requiring format-preserving encryption
+///
+/// Security properties:
+/// - Ciphertext length equals plaintext length
+/// - All ciphertext digits are in range [0, radix)
+/// - Requires unique (key, tweak) pairs for security
+/// - No authentication - consider AEAD if integrity protection is needed
+/// - Minimum message length depends on radix (e.g., 39 digits for decimal)
+///
+/// Type parameters:
+/// - `Aes`: AES variant (Aes128 or Aes256)
+/// - `radix`: Base for digit representation (2-256)
 pub fn Hctr2Fp(comptime Aes: anytype, comptime radix: u16) type {
     const AesEncryptCtx = aes.AesEncryptCtx(Aes);
     const AesDecryptCtx = aes.AesDecryptCtx(Aes);
@@ -102,13 +138,30 @@ pub fn Hctr2Fp(comptime Aes: anytype, comptime radix: u16) type {
         h: [Polyval.key_length]u8,
         l: [aes_block_length]u8,
 
+        /// Authentication tag length (0 - HCTR2+FP is unauthenticated).
         pub const tag_length = 0;
+
+        /// Nonce length (0 - HCTR2+FP uses tweaks instead).
         pub const nonce_length = 0;
+
+        /// Encryption key length in bytes (16 for AES-128, 32 for AES-256).
         pub const key_length = Aes.key_bits / 8;
+
+        /// First block length in digits (radix-dependent, e.g., 39 for decimal).
         pub const first_block_length = first_block_len;
+
+        /// Minimum message length in digits (same as first_block_length).
         pub const min_message_length = first_block_len;
+
+        /// AES block length in bytes (always 16).
         pub const block_length = aes_block_length;
 
+        /// Initialize HCTR2+FP cipher state from an encryption key.
+        ///
+        /// Parameters:
+        /// - `key`: Encryption key (16 bytes for AES-128, 32 bytes for AES-256)
+        ///
+        /// Returns: Initialized cipher state ready for encryption/decryption operations.
         pub fn init(key: [Aes.key_bits / 8]u8) State {
             const ks_enc = Aes.initEnc(key);
             const ks_dec = AesDecryptCtx.initFromEnc(ks_enc);
@@ -131,10 +184,38 @@ pub fn Hctr2Fp(comptime Aes: anytype, comptime radix: u16) type {
 
         const Direction = enum { encrypt, decrypt };
 
+        /// Encrypt plaintext to ciphertext using HCTR2+FP.
+        ///
+        /// All input digits must be in range [0, radix). Output will also be in this range.
+        ///
+        /// Parameters:
+        /// - `state`: Initialized cipher state
+        /// - `ciphertext`: Output buffer (must be same length as plaintext)
+        /// - `plaintext`: Input data to encrypt (minimum length: first_block_length)
+        /// - `tweak`: Tweak value for domain separation (can be empty, but must be unique per message with same key)
+        ///
+        /// Returns:
+        /// - `error.InputTooShort` if plaintext is less than first_block_length
+        /// - `error.InvalidDigit` if any digit >= radix
+        ///
+        /// Security: Never reuse the same (key, tweak) pair for different messages.
         pub fn encrypt(state: *State, ciphertext: []u8, plaintext: []const u8, tweak: []const u8) !void {
             try state.hctr2fp(ciphertext, plaintext, tweak, .encrypt);
         }
 
+        /// Decrypt ciphertext to plaintext using HCTR2+FP.
+        ///
+        /// All input digits must be in range [0, radix). Output will also be in this range.
+        ///
+        /// Parameters:
+        /// - `state`: Initialized cipher state
+        /// - `plaintext`: Output buffer (must be same length as ciphertext)
+        /// - `ciphertext`: Input data to decrypt (minimum length: first_block_length)
+        /// - `tweak`: Tweak value used during encryption
+        ///
+        /// Returns:
+        /// - `error.InputTooShort` if ciphertext is less than first_block_length
+        /// - `error.InvalidDigit` if any digit >= radix
         pub fn decrypt(state: *State, plaintext: []u8, ciphertext: []const u8, tweak: []const u8) !void {
             try state.hctr2fp(plaintext, ciphertext, tweak, .decrypt);
         }
