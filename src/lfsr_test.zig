@@ -62,7 +62,7 @@ fn lfsr_next_256(state: [32]u8) [32]u8 {
 
 test "128-bit LFSR basic operation" {
     // Test that the LFSR produces different states for 128-bit blocks
-    const initial_state = [_]u8{0x01} ++ [_]u8{0x00} ** 15;
+    const initial_state = [_]u8{0x01} ++ @as([15]u8, @splat(0x00));
 
     var state1 = initial_state;
     var state2 = lfsr_next_128(state1);
@@ -76,7 +76,7 @@ test "128-bit LFSR basic operation" {
 
 test "256-bit LFSR basic operation" {
     // Test that the LFSR produces different states for 256-bit blocks
-    const initial_state = [_]u8{0x01} ++ [_]u8{0x00} ** 31;
+    const initial_state = [_]u8{0x01} ++ @as([31]u8, @splat(0x00));
 
     var state1 = initial_state;
     var state2 = lfsr_next_256(state1);
@@ -91,7 +91,7 @@ test "256-bit LFSR basic operation" {
 test "256-bit LFSR feedback polynomial" {
     // Test specific case where feedback should be applied
     // Start with all 1s in the MSB position to trigger feedback
-    const state = [_]u8{0x00} ** 31 ++ [_]u8{0x80};
+    const state = @as([31]u8, @splat(0x00)) ++ [_]u8{0x80};
 
     const next_state = lfsr_next_256(state);
 
@@ -108,7 +108,7 @@ test "256-bit LFSR feedback polynomial" {
 
 test "256-bit LFSR period test" {
     // Test that LFSR has a long period (doesn't repeat quickly)
-    const initial_state = [_]u8{0x01} ++ [_]u8{0x00} ** 31;
+    const initial_state = [_]u8{0x01} ++ @as([31]u8, @splat(0x00));
     var state = initial_state;
 
     // Run for a reasonable number of iterations
@@ -123,7 +123,7 @@ test "256-bit LFSR period test" {
 
 test "256-bit LFSR shift behavior" {
     // Test basic shift behavior
-    var state = [_]u8{0x00} ** 31 ++ [_]u8{0x01};
+    var state = @as([31]u8, @splat(0x00)) ++ [_]u8{0x01};
 
     // After one shift, bit should move to position 1
     state = lfsr_next_256(state);
