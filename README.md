@@ -182,6 +182,10 @@ Messages shorter than the minimum will return `error.InputTooShort`.
 
 Important: Format-preserving modes are length-preserving (no expansion). Input length in digits equals output length in digits.
 
+### Format-preserving first block encoding
+
+In HCTR2-FP and HCTR3-FP, the first ciphertext block uses base-radix encoding, which may produce statistically distinguishable patterns. For example, in base-10 (decimal), the distribution of first-block digits may not appear uniformly random. However, the underlying encrypted data remains cryptographically secure—the encoding bias does not leak information about the plaintext.
+
 ### Key management
 
 Standard key management practices apply:
