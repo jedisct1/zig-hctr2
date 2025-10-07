@@ -176,7 +176,7 @@ HCTR2 and HCTR3 provide confidentiality only, not authenticity. They do not dete
 ### Minimum message lengths
 
 - HCTR2/HCTR3: 16 bytes minimum
-- HCTR2-FP/HCTR3-FP: depends on radix (39 bytes for decimal, 33 for hex, 27 for base64)
+- HCTR2-FP/HCTR3-FP: depends on radix (39 digits for decimal, 32 for hex, 22 for base64)
 
 Messages shorter than the minimum will return `error.InputTooShort`.
 
