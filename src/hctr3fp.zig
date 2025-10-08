@@ -459,34 +459,29 @@ pub fn Hctr3Fp(comptime Aes: anytype, comptime Hash: anytype, comptime radix: u1
             if (comptime isPowerOfTwo(radix)) {
                 const bits_per_digit = @ctz(@as(u16, radix));
                 const digits_per_block = @as(u32, 128) / @as(u32, bits_per_digit);
-                const mask: u16 = radix - 1;
+                const mask: u128 = radix - 1;
 
                 var block: [aes_block_length]u8 = undefined;
-                var digits_remaining: usize = 0;
-                var keystream_bits: u128 = 0;
+                var keystream: u128 = 0;
+                var digit_offset: usize = digits_per_block; // Start exhausted to trigger first block generation
 
-                while (i < src.len) {
-                    // Generate new block if needed
-                    if (digits_remaining == 0) {
+                while (i < src.len) : (i += 1) {
+                    // Generate new block when exhausted
+                    if (digit_offset == digits_per_block) {
                         @memcpy(&block, &lfsr);
                         lfsr = lfsr_next(lfsr);
-
                         state.ke_enc.encrypt(&block, &block);
-                        keystream_bits = mem.readInt(u128, &block, .little);
-                        digits_remaining = digits_per_block;
+                        keystream = mem.readInt(u128, &block, .little);
+                        digit_offset = 0;
                     }
 
-                    // Extract one digit from keystream
-                    const ks_digit: u8 = @intCast(keystream_bits & mask);
-                    keystream_bits >>= @intCast(bits_per_digit);
-                    digits_remaining -= 1;
+                    // Extract digit and apply format-preserving addition
+                    const ks_digit: u8 = @intCast(keystream & mask);
+                    const adjustment = if (dir == .encrypt) ks_digit else radix - ks_digit;
+                    dst[i] = @intCast((@as(u16, src[i]) + adjustment) & mask);
 
-                    if (comptime dir == .encrypt) {
-                        dst[i] = @intCast((@as(u16, src[i]) + ks_digit) & mask);
-                    } else {
-                        dst[i] = @intCast((@as(u16, src[i]) + radix - ks_digit) & mask);
-                    }
-                    i += 1;
+                    keystream >>= @intCast(bits_per_digit);
+                    digit_offset += 1;
                 }
 
                 return;
