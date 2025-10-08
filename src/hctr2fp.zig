@@ -358,123 +358,55 @@ pub fn Hctr2Fp(comptime Aes: anytype, comptime radix: u16) type {
             return hh;
         }
 
-        /// Apply keystream from an AES block to src, writing to dst using modular arithmetic.
-        /// Interprets the AES block as a u128 and extracts base-radix digits.
+        /// Format-Preserving XCTR mode: encrypts/decrypts using one AES block per digit.
         ///
-        /// Assumes: radix in [2, 256] (enforced at compile time)
-        inline fn applyKeystreamBlock(dst: []u8, src: []const u8, keystream_block: *const [aes_block_length]u8, comptime dir: Direction) void {
-            assert(dst.len == src.len);
-            var value = mem.readInt(u128, keystream_block, .little);
-            for (dst, src) |*d, s| {
-                const keystream_digit: u8 = @intCast(value % radix);
-                if (comptime dir == .encrypt) {
-                    // Use u16 to avoid overflow when radix <= 256:
-                    // max value is (255) + (255) = 510, fits in u16
-                    d.* = @intCast((@as(u16, s) + @as(u16, keystream_digit)) % radix);
-                } else {
-                    // Use u16 to avoid overflow when radix <= 256:
-                    // max value is 256 + 255 - 0 = 511, fits in u16
-                    d.* = @intCast((@as(u16, s) + radix - @as(u16, keystream_digit)) % radix);
-                }
-                value /= radix;
-            }
-        }
-
-        /// Format-Preserving XCTR mode: encrypts/decrypts tail blocks using modular arithmetic.
-        ///
-        /// Similar to standard XCTR but uses modular addition/subtraction instead of XOR
-        /// to preserve digit format within the specified radix.
-        ///
-        /// Algorithm:
-        /// 1. Generate AES keystream blocks from counters XORed with seed
-        /// 2. Interpret each AES block as a 128-bit integer (little-endian)
-        /// 3. Extract base-radix digits sequentially: digit = value % radix, value /= radix
-        /// 4. Apply each keystream digit using modular arithmetic:
-        ///    - Encryption: (plaintext_digit + keystream_digit) mod radix
-        ///    - Decryption: (ciphertext_digit - keystream_digit) mod radix
-        ///
-        /// This ensures each output digit remains in [0, radix) while using the full
-        /// cryptographic strength of the AES keystream.
-        ///
-        /// Parameters:
-        /// - `state`: Cipher state containing AES encryption key
-        /// - `dst`: Output buffer (same length as src)
-        /// - `src`: Input buffer (plaintext for encryption, ciphertext for decryption)
-        /// - `seed`: AES block to XOR with counter values
-        /// - `dir`: Direction (.encrypt or .decrypt)
+        /// We generate one AES block per digit, convert it to
+        /// a 128-bit integer, and reduce modulo radix to get the keystream digit.
         fn fpXctr(state: *const State, dst: []u8, src: []const u8, seed: [aes_block_length]u8, comptime dir: Direction) void {
             assert(dst.len == src.len);
 
             const batch = Aes.block.parallel.optimal_parallel_blocks;
-            const block_length_batch = aes_block_length * batch;
-            var counter_bytes_batch: [block_length_batch]u8 = undefined;
+            var blocks: [aes_block_length * batch]u8 = undefined;
             var counter: u64 = 1;
             var i: usize = 0;
 
-            // Batched processing for performance
-            if (src.len > block_length_batch) {
-                var seed_batch: [block_length_batch]u8 = undefined;
+            // Batched processing
+            while (i + batch <= src.len) : (i += batch) {
                 inline for (0..batch) |j| {
-                    @memcpy(seed_batch[j * aes_block_length ..][0..aes_block_length], &seed);
+                    const offset = j * aes_block_length;
+                    mem.writeInt(u64, blocks[offset..][0..8], counter + j, .little);
+                    @memset(blocks[offset..][8..aes_block_length], 0);
+                    for (blocks[offset..][0..aes_block_length], seed) |*p, s| p.* ^= s;
                 }
+                counter += batch;
 
-                while (i + block_length_batch <= src.len) : (i += block_length_batch) {
-                    // Generate counter blocks
-                    inline for (0..batch) |j| {
-                        mem.writeInt(u64, counter_bytes_batch[aes_block_length * j ..][0..8], counter, .little);
-                        @memset(counter_bytes_batch[aes_block_length * j ..][8..aes_block_length], 0);
-                        counter += 1;
-                    }
+                state.ks_enc.encryptWide(batch, &blocks, &blocks);
 
-                    // XOR with seed
-                    for (&counter_bytes_batch, seed_batch) |*p, s| {
-                        p.* ^= s;
-                    }
-
-                    // Encrypt batch
-                    state.ks_enc.encryptWide(batch, &counter_bytes_batch, &counter_bytes_batch);
-
-                    // Apply keystream from each AES block in batch
-                    inline for (0..batch) |j| {
-                        const block_offset = j * aes_block_length;
-                        const keystream_block = counter_bytes_batch[block_offset..][0..aes_block_length];
-                        const pos = i + block_offset;
-                        const len = @min(aes_block_length, src.len - pos);
-                        applyKeystreamBlock(dst[pos..][0..len], src[pos..][0..len], keystream_block, dir);
+                inline for (0..batch) |j| {
+                    const ks_digit: u8 = @intCast(mem.readInt(u128, blocks[j * aes_block_length ..][0..aes_block_length], .little) % radix);
+                    if (comptime dir == .encrypt) {
+                        dst[i + j] = @intCast((@as(u16, src[i + j]) + ks_digit) % radix);
+                    } else {
+                        dst[i + j] = @intCast((@as(u16, src[i + j]) + radix - ks_digit) % radix);
                     }
                 }
             }
 
-            // Handle remaining blocks one at a time
-            const counter_bytes = counter_bytes_batch[0..aes_block_length];
-
-            while (i + aes_block_length <= src.len) : (i += aes_block_length) {
-                mem.writeInt(u64, counter_bytes[0..8], counter, .little);
-                @memset(counter_bytes[8..], 0);
+            // Remaining digits
+            while (i < src.len) : (i += 1) {
+                mem.writeInt(u64, blocks[0..8], counter, .little);
+                @memset(blocks[8..aes_block_length], 0);
+                for (blocks[0..aes_block_length], seed) |*p, s| p.* ^= s;
                 counter += 1;
 
-                for (counter_bytes, seed) |*p, x| {
-                    p.* ^= x;
+                state.ks_enc.encrypt(blocks[0..aes_block_length], blocks[0..aes_block_length]);
+
+                const ks_digit: u8 = @intCast(mem.readInt(u128, blocks[0..aes_block_length], .little) % radix);
+                if (comptime dir == .encrypt) {
+                    dst[i] = @intCast((@as(u16, src[i]) + ks_digit) % radix);
+                } else {
+                    dst[i] = @intCast((@as(u16, src[i]) + radix - ks_digit) % radix);
                 }
-
-                state.ks_enc.encrypt(counter_bytes, counter_bytes);
-
-                applyKeystreamBlock(dst[i..][0..aes_block_length], src[i..][0..aes_block_length], counter_bytes, dir);
-            }
-
-            // Handle partial final block
-            const left = src.len - i;
-            if (left > 0) {
-                mem.writeInt(u64, counter_bytes[0..8], counter, .little);
-                @memset(counter_bytes[8..], 0);
-
-                for (counter_bytes, seed) |*p, x| {
-                    p.* ^= x;
-                }
-
-                state.ks_enc.encrypt(counter_bytes, counter_bytes);
-
-                applyKeystreamBlock(dst[i..][0..left], src[i..][0..left], counter_bytes, dir);
             }
         }
     };

@@ -402,102 +402,52 @@ pub fn Hctr3Fp(comptime Aes: anytype, comptime Hash: anytype, comptime radix: u1
             return hh;
         }
 
-        /// Apply keystream from an AES block to src, writing to dst using modular arithmetic.
-        /// Interprets the AES block as a u128 and extracts base-radix digits.
-        ///
-        /// Assumes: radix in [2, 256] (enforced at compile time)
-        inline fn applyKeystreamBlock(dst: []u8, src: []const u8, keystream_block: *const [aes_block_length]u8, comptime dir: Direction) void {
-            assert(dst.len == src.len);
-            var value = mem.readInt(u128, keystream_block, .little);
-            for (dst, src) |*d, s| {
-                const keystream_digit: u8 = @intCast(value % radix);
-                if (comptime dir == .encrypt) {
-                    // Use u16 to avoid overflow when radix <= 256:
-                    // max value is (255) + (255) = 510, fits in u16
-                    d.* = @intCast((@as(u16, s) + @as(u16, keystream_digit)) % radix);
-                } else {
-                    // Use u16 to avoid overflow when radix <= 256:
-                    // max value is 256 + 255 - 0 = 511, fits in u16
-                    d.* = @intCast((@as(u16, s) + radix - @as(u16, keystream_digit)) % radix);
-                }
-                value /= radix;
-            }
-        }
-
         /// Format-Preserving Encrypted LFSR Keystream (fpELK) mode.
         ///
-        /// Combines HCTR3's ELK mode with format-preserving encryption using modular arithmetic.
-        /// Uses LFSR-based counter generation instead of simple incrementing counters.
+        /// We encrypt successive LFSR states with AES, convert each
+        /// to a 128-bit integer, and reduce modulo radix to get the keystream digit.
         ///
-        /// Algorithm:
-        /// 1. Generate keystream blocks using LFSR states encrypted with AES (ke)
-        /// 2. Interpret each AES block as a 128-bit integer (little-endian)
-        /// 3. Extract base-radix digits sequentially: digit = value % radix, value /= radix
-        /// 4. Apply each keystream digit using modular arithmetic:
-        ///    - Encryption: (plaintext_digit + keystream_digit) mod radix
-        ///    - Decryption: (ciphertext_digit - keystream_digit) mod radix
-        ///
-        /// The LFSR provides additional security margins in constrained environments and
-        /// ensures compatibility with HCTR3's security properties. Each output digit
-        /// remains in [0, radix) while utilizing the full cryptographic strength of
-        /// the AES-encrypted LFSR keystream.
-        ///
-        /// Parameters:
-        /// - `state`: Cipher state containing AES encryption key (ke)
-        /// - `dst`: Output buffer (same length as src)
-        /// - `src`: Input buffer (plaintext for encryption, ciphertext for decryption)
-        /// - `seed`: Initial LFSR seed (derived from encrypted first block)
-        /// - `dir`: Direction (.encrypt or .decrypt)
+        /// For a message with 50 digits, this generates 50 AES blocks (not 1 block divided 50 ways).
         fn fpElk(state: *const State, dst: []u8, src: []const u8, seed: [aes_block_length]u8, comptime dir: Direction) void {
             assert(dst.len == src.len);
 
             const batch = Aes.block.parallel.optimal_parallel_blocks;
-            const block_length_batch = aes_block_length * batch;
-            var counter_bytes_batch: [block_length_batch]u8 = undefined;
-            var lfsr_state = seed;
+            var blocks: [aes_block_length * batch]u8 = undefined;
+            var lfsr = seed;
             var i: usize = 0;
 
-            // Batched processing for performance
-            if (src.len > block_length_batch) {
-                while (i + block_length_batch <= src.len) : (i += block_length_batch) {
-                    // Generate batch of LFSR states
-                    inline for (0..batch) |j| {
-                        @memcpy(counter_bytes_batch[aes_block_length * j ..][0..aes_block_length], &lfsr_state);
-                        lfsr_state = lfsr_next(lfsr_state);
-                    }
+            // Batched processing
+            while (i + batch <= src.len) : (i += batch) {
+                inline for (0..batch) |j| {
+                    @memcpy(blocks[j * aes_block_length ..][0..aes_block_length], &lfsr);
+                    lfsr = lfsr_next(lfsr);
+                }
 
-                    // Encrypt batch with ke
-                    state.ke_enc.encryptWide(batch, &counter_bytes_batch, &counter_bytes_batch);
+                state.ke_enc.encryptWide(batch, &blocks, &blocks);
 
-                    // Apply keystream from each AES block in batch
-                    inline for (0..batch) |j| {
-                        const block_offset = j * aes_block_length;
-                        const keystream_block = counter_bytes_batch[block_offset..][0..aes_block_length];
-                        const pos = i + block_offset;
-                        const len = @min(aes_block_length, src.len - pos);
-                        applyKeystreamBlock(dst[pos..][0..len], src[pos..][0..len], keystream_block, dir);
+                inline for (0..batch) |j| {
+                    const ks_digit: u8 = @intCast(mem.readInt(u128, blocks[j * aes_block_length ..][0..aes_block_length], .little) % radix);
+                    if (comptime dir == .encrypt) {
+                        dst[i + j] = @intCast((@as(u16, src[i + j]) + ks_digit) % radix);
+                    } else {
+                        dst[i + j] = @intCast((@as(u16, src[i + j]) + radix - ks_digit) % radix);
                     }
                 }
             }
 
-            // Handle remaining blocks one at a time
-            const counter_bytes = counter_bytes_batch[0..aes_block_length];
+            // Remaining digits
+            while (i < src.len) : (i += 1) {
+                @memcpy(blocks[0..aes_block_length], &lfsr);
+                lfsr = lfsr_next(lfsr);
 
-            while (i + aes_block_length <= src.len) : (i += aes_block_length) {
-                @memcpy(counter_bytes, &lfsr_state);
-                lfsr_state = lfsr_next(lfsr_state);
-                state.ke_enc.encrypt(counter_bytes, counter_bytes);
+                state.ke_enc.encrypt(blocks[0..aes_block_length], blocks[0..aes_block_length]);
 
-                applyKeystreamBlock(dst[i..][0..aes_block_length], src[i..][0..aes_block_length], counter_bytes, dir);
-            }
-
-            // Handle partial final block
-            const left = src.len - i;
-            if (left > 0) {
-                @memcpy(counter_bytes, &lfsr_state);
-                state.ke_enc.encrypt(counter_bytes, counter_bytes);
-
-                applyKeystreamBlock(dst[i..][0..left], src[i..][0..left], counter_bytes, dir);
+                const ks_digit: u8 = @intCast(mem.readInt(u128, blocks[0..aes_block_length], .little) % radix);
+                if (comptime dir == .encrypt) {
+                    dst[i] = @intCast((@as(u16, src[i]) + ks_digit) % radix);
+                } else {
+                    dst[i] = @intCast((@as(u16, src[i]) + radix - ks_digit) % radix);
+                }
             }
         }
 
