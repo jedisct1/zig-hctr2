@@ -458,30 +458,41 @@ pub fn Hctr3Fp(comptime Aes: anytype, comptime Hash: anytype, comptime radix: u1
             // Power-of-2 fast path: extract multiple digits from each AES block
             if (comptime isPowerOfTwo(radix)) {
                 const bits_per_digit = @ctz(@as(u16, radix));
-                const digits_per_block = @as(u32, 128) / @as(u32, bits_per_digit);
+                const digits_per_block = @as(usize, 128) / @as(usize, bits_per_digit);
                 const mask: u128 = radix - 1;
 
                 var block: [aes_block_length]u8 = undefined;
-                var keystream: u128 = 0;
-                var digit_offset: usize = digits_per_block; // Start exhausted to trigger first block generation
 
-                while (i < src.len) : (i += 1) {
-                    // Generate new block when exhausted
-                    if (digit_offset == digits_per_block) {
-                        @memcpy(&block, &lfsr);
-                        lfsr = lfsr_next(lfsr);
-                        state.ke_enc.encrypt(&block, &block);
-                        keystream = mem.readInt(u128, &block, .little);
-                        digit_offset = 0;
+                // Process in chunks of digits_per_block
+                while (i + digits_per_block <= src.len) : (i += digits_per_block) {
+                    // Generate keystream block
+                    @memcpy(&block, &lfsr);
+                    lfsr = lfsr_next(lfsr);
+                    state.ke_enc.encrypt(&block, &block);
+                    var keystream = mem.readInt(u128, &block, .little);
+
+                    // Process all digits from this block (unrolled at compile time)
+                    inline for (0..digits_per_block) |j| {
+                        const ks_digit: u8 = @intCast(keystream & mask);
+                        const adjustment = if (dir == .encrypt) ks_digit else radix - ks_digit;
+                        dst[i + j] = @intCast((@as(u16, src[i + j]) + adjustment) & mask);
+                        keystream >>= @intCast(bits_per_digit);
                     }
+                }
 
-                    // Extract digit and apply format-preserving addition
-                    const ks_digit: u8 = @intCast(keystream & mask);
-                    const adjustment = if (dir == .encrypt) ks_digit else radix - ks_digit;
-                    dst[i] = @intCast((@as(u16, src[i]) + adjustment) & mask);
+                // Handle remaining digits
+                if (i < src.len) {
+                    @memcpy(&block, &lfsr);
+                    lfsr = lfsr_next(lfsr);
+                    state.ke_enc.encrypt(&block, &block);
+                    var keystream = mem.readInt(u128, &block, .little);
 
-                    keystream >>= @intCast(bits_per_digit);
-                    digit_offset += 1;
+                    while (i < src.len) : (i += 1) {
+                        const ks_digit: u8 = @intCast(keystream & mask);
+                        const adjustment = if (dir == .encrypt) ks_digit else radix - ks_digit;
+                        dst[i] = @intCast((@as(u16, src[i]) + adjustment) & mask);
+                        keystream >>= @intCast(bits_per_digit);
+                    }
                 }
 
                 return;
