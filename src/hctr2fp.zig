@@ -431,7 +431,7 @@ pub fn Hctr2Fp(comptime Aes: anytype, comptime radix: u16) type {
                     state.ks_enc.encrypt(&block, &block);
                     var keystream = mem.readInt(u128, &block, .little);
 
-                    // Process all digits from this block (unrolled at compile time)
+                    // Process all digits from this block
                     inline for (0..digits_per_block) |j| {
                         const ks_digit: u8 = @intCast(keystream & mask);
                         const adjustment = if (dir == .encrypt) ks_digit else radix - ks_digit;
