@@ -32,6 +32,13 @@ fn computeFirstBlockLength(comptime radix: u16) comptime_int {
     // Special case: radix=256 is identical to standard HCTR2
     if (radix == 256) return 16;
 
+    // Power-of-2 radixes: each digit requires log₂(radix) bits
+    // Use ceiling division to ensure we have enough digits
+    if (comptime isPowerOfTwo(radix)) {
+        const bits_per_digit = @ctz(@as(u16, radix));
+        return (128 + bits_per_digit - 1) / bits_per_digit;
+    }
+
     // Find smallest k where radix^k >= 2^128
     var k: u32 = 1;
     var capacity: u256 = radix;
@@ -44,6 +51,11 @@ fn computeFirstBlockLength(comptime radix: u16) comptime_int {
     return k;
 }
 
+/// Check if a number is a power of two at compile time.
+inline fn isPowerOfTwo(comptime n: u16) bool {
+    return n > 0 and (n & (n - 1)) == 0;
+}
+
 /// Encode a 128-bit value as base-RADIX digits (little-endian).
 /// The output buffer must have length >= computeFirstBlockLength(radix).
 pub fn encodeBaseRadix(value: u128, comptime radix: u16, output: []u8) void {
@@ -54,6 +66,22 @@ pub fn encodeBaseRadix(value: u128, comptime radix: u16, output: []u8) void {
     // Special case: radix=256 is just byte representation
     if (comptime radix == 256) {
         mem.writeInt(u128, output[0..16], value, .little);
+        return;
+    }
+
+    // Power-of-2 fast path: use bit shifting and masking instead of division
+    if (comptime isPowerOfTwo(radix)) {
+        const bits_per_digit = @ctz(@as(u16, radix));
+        const mask: u128 = (@as(u128, 1) << bits_per_digit) - 1;
+        var bits = value;
+
+        for (output) |*digit| {
+            digit.* = @intCast(bits & mask);
+            bits >>= bits_per_digit;
+        }
+
+        // Verify no overflow - remaining bits should be 0
+        assert(bits == 0);
         return;
     }
 
@@ -84,6 +112,19 @@ pub fn decodeBaseRadix(digits: []const u8, comptime radix: u16) !u128 {
         for (digits) |d| {
             if (d >= radix) return error.InvalidDigit;
         }
+    }
+
+    // Power-of-2 fast path: use bit shifting and OR instead of multiplication
+    if (comptime isPowerOfTwo(radix)) {
+        const bits_per_digit = @ctz(@as(u16, radix));
+        var value: u128 = 0;
+
+        for (digits, 0..) |digit, i| {
+            const shift = @as(u7, @intCast(i * bits_per_digit));
+            value |= @as(u128, digit) << shift;
+        }
+
+        return value;
     }
 
     // Accumulate from most significant to least significant (reverse order)
@@ -370,6 +411,53 @@ pub fn Hctr2Fp(comptime Aes: anytype, comptime radix: u16) type {
             var counter: u64 = 1;
             var i: usize = 0;
 
+            // Power-of-2 fast path: use bitwise AND instead of modulo
+            if (comptime isPowerOfTwo(radix)) {
+                const mask: u16 = radix - 1;
+
+                // Batched processing
+                while (i + batch <= src.len) : (i += batch) {
+                    inline for (0..batch) |j| {
+                        const offset = j * aes_block_length;
+                        mem.writeInt(u64, blocks[offset..][0..8], counter + j, .little);
+                        @memset(blocks[offset..][8..aes_block_length], 0);
+                        for (blocks[offset..][0..aes_block_length], seed) |*p, s| p.* ^= s;
+                    }
+                    counter += batch;
+
+                    state.ks_enc.encryptWide(batch, &blocks, &blocks);
+
+                    inline for (0..batch) |j| {
+                        const ks_digit: u8 = @intCast(@as(u16, blocks[j * aes_block_length]) & mask);
+                        if (comptime dir == .encrypt) {
+                            dst[i + j] = @intCast((@as(u16, src[i + j]) + ks_digit) & mask);
+                        } else {
+                            dst[i + j] = @intCast((@as(u16, src[i + j]) + radix - ks_digit) & mask);
+                        }
+                    }
+                }
+
+                // Remaining digits
+                while (i < src.len) : (i += 1) {
+                    mem.writeInt(u64, blocks[0..8], counter, .little);
+                    @memset(blocks[8..aes_block_length], 0);
+                    for (blocks[0..aes_block_length], seed) |*p, s| p.* ^= s;
+                    counter += 1;
+
+                    state.ks_enc.encrypt(blocks[0..aes_block_length], blocks[0..aes_block_length]);
+
+                    const ks_digit: u8 = @intCast(@as(u16, blocks[0]) & mask);
+                    if (comptime dir == .encrypt) {
+                        dst[i] = @intCast((@as(u16, src[i]) + ks_digit) & mask);
+                    } else {
+                        dst[i] = @intCast((@as(u16, src[i]) + radix - ks_digit) & mask);
+                    }
+                }
+
+                return;
+            }
+
+            // General case: use full modulo arithmetic
             // Batched processing
             while (i + batch <= src.len) : (i += batch) {
                 inline for (0..batch) |j| {
