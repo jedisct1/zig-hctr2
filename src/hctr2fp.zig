@@ -401,8 +401,8 @@ pub fn Hctr2Fp(comptime Aes: anytype, comptime radix: u16) type {
 
         /// Format-Preserving XCTR mode: encrypts/decrypts using one AES block per digit.
         ///
-        /// We generate one AES block per digit, convert it to
-        /// a 128-bit integer, and reduce modulo radix to get the keystream digit.
+        /// For power-of-2 radixes, we extract multiple digits from each AES block.
+        /// For other radixes, we generate one AES block per digit and reduce modulo radix.
         fn fpXctr(state: *const State, dst: []u8, src: []const u8, seed: [aes_block_length]u8, comptime dir: Direction) void {
             assert(dst.len == src.len);
 
@@ -411,47 +411,40 @@ pub fn Hctr2Fp(comptime Aes: anytype, comptime radix: u16) type {
             var counter: u64 = 1;
             var i: usize = 0;
 
-            // Power-of-2 fast path: use bitwise AND instead of modulo
+            // Power-of-2 fast path: extract multiple digits from each AES block
             if (comptime isPowerOfTwo(radix)) {
+                const bits_per_digit = @ctz(@as(u16, radix));
+                const digits_per_block = @as(u32, 128) / @as(u32, bits_per_digit);
                 const mask: u16 = radix - 1;
 
-                // Batched processing
-                while (i + batch <= src.len) : (i += batch) {
-                    inline for (0..batch) |j| {
-                        const offset = j * aes_block_length;
-                        mem.writeInt(u64, blocks[offset..][0..8], counter + j, .little);
-                        @memset(blocks[offset..][8..aes_block_length], 0);
-                        for (blocks[offset..][0..aes_block_length], seed) |*p, s| p.* ^= s;
+                var block: [aes_block_length]u8 = undefined;
+                var digits_remaining: usize = 0;
+                var keystream_bits: u128 = 0;
+
+                while (i < src.len) {
+                    // Generate new block if needed
+                    if (digits_remaining == 0) {
+                        mem.writeInt(u64, block[0..8], counter, .little);
+                        @memset(block[8..aes_block_length], 0);
+                        for (&block, seed) |*p, s| p.* ^= s;
+                        counter += 1;
+
+                        state.ks_enc.encrypt(&block, &block);
+                        keystream_bits = mem.readInt(u128, &block, .little);
+                        digits_remaining = digits_per_block;
                     }
-                    counter += batch;
 
-                    state.ks_enc.encryptWide(batch, &blocks, &blocks);
+                    // Extract one digit from keystream
+                    const ks_digit: u8 = @intCast(keystream_bits & mask);
+                    keystream_bits >>= @intCast(bits_per_digit);
+                    digits_remaining -= 1;
 
-                    inline for (0..batch) |j| {
-                        const ks_digit: u8 = @intCast(@as(u16, blocks[j * aes_block_length]) & mask);
-                        if (comptime dir == .encrypt) {
-                            dst[i + j] = @intCast((@as(u16, src[i + j]) + ks_digit) & mask);
-                        } else {
-                            dst[i + j] = @intCast((@as(u16, src[i + j]) + radix - ks_digit) & mask);
-                        }
-                    }
-                }
-
-                // Remaining digits
-                while (i < src.len) : (i += 1) {
-                    mem.writeInt(u64, blocks[0..8], counter, .little);
-                    @memset(blocks[8..aes_block_length], 0);
-                    for (blocks[0..aes_block_length], seed) |*p, s| p.* ^= s;
-                    counter += 1;
-
-                    state.ks_enc.encrypt(blocks[0..aes_block_length], blocks[0..aes_block_length]);
-
-                    const ks_digit: u8 = @intCast(@as(u16, blocks[0]) & mask);
                     if (comptime dir == .encrypt) {
                         dst[i] = @intCast((@as(u16, src[i]) + ks_digit) & mask);
                     } else {
                         dst[i] = @intCast((@as(u16, src[i]) + radix - ks_digit) & mask);
                     }
+                    i += 1;
                 }
 
                 return;
