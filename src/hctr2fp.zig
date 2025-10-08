@@ -35,7 +35,7 @@ fn computeFirstBlockLength(comptime radix: u16) comptime_int {
     // Power-of-2 radixes: each digit requires log₂(radix) bits
     // Use ceiling division to ensure we have enough digits
     if (comptime isPowerOfTwo(radix)) {
-        const bits_per_digit = @ctz(@as(u16, radix));
+        const bits_per_digit = @as(u32, @ctz(@as(u16, radix)));
         return (128 + bits_per_digit - 1) / bits_per_digit;
     }
 
@@ -72,12 +72,12 @@ pub fn encodeBaseRadix(value: u128, comptime radix: u16, output: []u8) void {
     // Power-of-2 fast path: use bit shifting and masking instead of division
     if (comptime isPowerOfTwo(radix)) {
         const bits_per_digit = @ctz(@as(u16, radix));
-        const mask: u128 = (@as(u128, 1) << bits_per_digit) - 1;
+        const mask: u128 = (@as(u128, 1) << @intCast(bits_per_digit)) - 1;
         var bits = value;
 
         for (output) |*digit| {
             digit.* = @intCast(bits & mask);
-            bits >>= bits_per_digit;
+            bits >>= @intCast(bits_per_digit);
         }
 
         // Verify no overflow - remaining bits should be 0
