@@ -595,3 +595,68 @@ test "HCTR2-FP encrypt/decrypt round-trip - radix 94" {
 
     try testing.expectEqualSlices(u8, &plaintext, &decrypted);
 }
+
+// Comprehensive test: various radices with various message sizes
+test "HCTR2-FP encrypt/decrypt round-trip - various radices and message sizes" {
+    // Test radices: 8, 10, 50, 96, 100, 150
+    const test_radices = [_]u16{ 8, 10, 50, 96, 100, 150 };
+
+    inline for (test_radices) |radix| {
+        const Cipher = hctr2fp.Hctr2Fp(aes.Aes128, radix);
+        const key: [16]u8 = @splat(@as(u8, @intCast(radix & 0xFF)));
+        var cipher = Cipher.init(key);
+
+        const first_len = Cipher.first_block_length;
+
+        // Test various message sizes relative to first_block_length
+        // We test: exact minimum, small tail, medium tail, large tail
+        const tail_sizes = [_]usize{ 0, 10, 50, 100, 150 };
+
+        for (tail_sizes) |tail_size| {
+            const message_len = first_len + tail_size;
+
+            const plaintext = try testing.allocator.alloc(u8, message_len);
+            defer testing.allocator.free(plaintext);
+
+            const ciphertext = try testing.allocator.alloc(u8, message_len);
+            defer testing.allocator.free(ciphertext);
+
+            const decrypted = try testing.allocator.alloc(u8, message_len);
+            defer testing.allocator.free(decrypted);
+
+            // Encode first block from a valid u128 value
+            const value: u128 = 0xDEADBEEFCAFEBABE_0123456789ABCDEF;
+            hctr2fp.encodeBaseRadix(value, radix, plaintext[0..first_len]);
+
+            // Fill tail with valid digits (if any)
+            if (tail_size > 0) {
+                for (plaintext[first_len..], 0..) |*p, i| {
+                    p.* = @intCast((i * 7 + 13) % radix);
+                }
+            }
+
+            // Create unique tweak for this test case
+            var tweak_buf: [64]u8 = undefined;
+            const tweak = std.fmt.bufPrint(&tweak_buf, "radix_{}_size_{}", .{ radix, message_len }) catch unreachable;
+
+            // Encrypt
+            try cipher.encrypt(ciphertext, plaintext, tweak);
+
+            // Verify all ciphertext digits are in valid range
+            for (ciphertext) |c| {
+                try testing.expect(c < radix);
+            }
+
+            // Verify ciphertext differs from plaintext (unless message is too short)
+            if (message_len > first_len + 5) {
+                try testing.expect(!std.mem.eql(u8, plaintext, ciphertext));
+            }
+
+            // Decrypt
+            try cipher.decrypt(decrypted, ciphertext, tweak);
+
+            // Verify round-trip
+            try testing.expectEqualSlices(u8, plaintext, decrypted);
+        }
+    }
+}
