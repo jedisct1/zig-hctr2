@@ -71,11 +71,12 @@ test "HCTR3-FP LFSR next state - 128-bit" {
     try testing.expectEqualSlices(u8, &zero_state, &next_zero); // LFSR with all-zero input stays zero
 }
 
-test "HCTR3-FP LFSR next state - 256-bit" {
+test "HCTR3-FP LFSR next state - AES-256" {
     const Cipher = hctr3fp.Hctr3Fp_256_Decimal;
 
+    // Note: AES-256 still has a 16-byte block size (256 refers to key size)
     // Test that LFSR produces different states
-    var state: [32]u8 = @splat(1);
+    var state: [16]u8 = @splat(1);
     const state2 = Cipher.lfsr_next(state);
     const state3 = Cipher.lfsr_next(state2);
 
@@ -521,4 +522,93 @@ test "HCTR3-FP vs HCTR2-FP difference" {
 
     // HCTR2-FP and HCTR3-FP should produce different ciphertexts
     try testing.expect(!std.mem.eql(u8, &ciphertext2, &ciphertext3));
+}
+
+// Test for radix 94 overflow issue
+test "HCTR3-FP base conversion round-trip - radix 94" {
+    const Cipher = hctr3fp.Hctr3Fp(aes.Aes128, std.crypto.hash.sha2.Sha256, 94);
+    const radix = 94;
+    const first_len = Cipher.first_block_length;
+
+    var buffer: [first_len]u8 = undefined;
+
+    // Test zero
+    {
+        const value: u128 = 0;
+        hctr3fp.encodeBaseRadix(value, radix, &buffer);
+        for (buffer) |d| {
+            try testing.expect(d < radix);
+        }
+        const decoded = try hctr3fp.decodeBaseRadix(&buffer, radix);
+        try testing.expectEqual(value, decoded);
+    }
+
+    // Test small value
+    {
+        const value: u128 = 12345;
+        hctr3fp.encodeBaseRadix(value, radix, &buffer);
+        for (buffer) |d| {
+            try testing.expect(d < radix);
+        }
+        const decoded = try hctr3fp.decodeBaseRadix(&buffer, radix);
+        try testing.expectEqual(value, decoded);
+    }
+
+    // Test large value
+    {
+        const value: u128 = 0xDEADBEEFCAFEBABE0123456789ABCDEF;
+        hctr3fp.encodeBaseRadix(value, radix, &buffer);
+        for (buffer) |d| {
+            try testing.expect(d < radix);
+        }
+        const decoded = try hctr3fp.decodeBaseRadix(&buffer, radix);
+        try testing.expectEqual(value, decoded);
+    }
+
+    // Test max u128 - this is where overflow occurs
+    {
+        const value: u128 = std.math.maxInt(u128);
+        hctr3fp.encodeBaseRadix(value, radix, &buffer);
+        for (buffer) |d| {
+            try testing.expect(d < radix);
+        }
+        const decoded = try hctr3fp.decodeBaseRadix(&buffer, radix);
+        try testing.expectEqual(value, decoded);
+    }
+}
+
+// Test encryption/decryption with radix 94
+test "HCTR3-FP encrypt/decrypt round-trip - radix 94" {
+    const Cipher = hctr3fp.Hctr3Fp(aes.Aes128, std.crypto.hash.sha2.Sha256, 94);
+    const key: [16]u8 = @splat(0x42);
+    var cipher = Cipher.init(key);
+
+    const first_len = Cipher.first_block_length;
+    const tail_len = 30;
+    const message_len = first_len + tail_len;
+    var plaintext: [message_len]u8 = undefined;
+
+    // Encode first block from a valid u128
+    const value: u128 = std.math.maxInt(u128);
+    hctr3fp.encodeBaseRadix(value, 94, plaintext[0..first_len]);
+
+    // Fill tail with valid digits
+    for (plaintext[first_len..], 0..) |*p, i| {
+        p.* = @intCast((i * 7) % 94);
+    }
+
+    var ciphertext: [message_len]u8 = undefined;
+    var decrypted: [message_len]u8 = undefined;
+    const tweak = "test_radix_94";
+
+    try cipher.encrypt(&ciphertext, &plaintext, tweak);
+
+    // Verify all ciphertext digits are valid
+    for (ciphertext) |c| {
+        try testing.expect(c < 94);
+    }
+
+    try cipher.decrypt(&decrypted, &ciphertext, tweak);
+
+    try testing.expectEqualSlices(u8, &plaintext, &decrypted);
 }

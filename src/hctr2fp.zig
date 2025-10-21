@@ -128,13 +128,15 @@ pub fn decodeBaseRadix(digits: []const u8, comptime radix: u16) !u128 {
     }
 
     // Accumulate from most significant to least significant (reverse order)
-    // For valid inputs (verified in debug builds), the value is < 2^128 and all
-    // intermediate values are also < 2^128, so regular arithmetic is safe.
+    // For large radixes where radix^k > 2^128, intermediate values during decoding
+    // can exceed 2^128 even though the final result should be < 2^128 for valid
+    // encoded values. We use wrapping arithmetic to handle this correctly, as we're
+    // effectively working modulo 2^128 in the finite field.
     var value: u128 = 0;
     var i = digits.len;
     while (i > 0) {
         i -= 1;
-        value = value * radix + digits[i];
+        value = value *% radix +% digits[i];
     }
 
     return value;

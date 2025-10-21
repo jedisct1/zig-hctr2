@@ -506,3 +506,92 @@ test "overflow handling with radix 256 (max radix)" {
 
 // Note: Tests for radix > 127 are omitted because they involve complex edge cases
 // with base-radix encoding where radix^k > 2^128. Common radixes (10, 16, 64) work correctly.
+
+// Test for radix 94 overflow issue
+test "base conversion round-trip - radix 94" {
+    const Cipher = hctr2fp.Hctr2Fp(aes.Aes128, 94);
+    const radix = 94;
+    const first_len = Cipher.first_block_length;
+
+    var buffer: [first_len]u8 = undefined;
+
+    // Test zero
+    {
+        const value: u128 = 0;
+        hctr2fp.encodeBaseRadix(value, radix, &buffer);
+        for (buffer) |d| {
+            try testing.expect(d < radix);
+        }
+        const decoded = try hctr2fp.decodeBaseRadix(&buffer, radix);
+        try testing.expectEqual(value, decoded);
+    }
+
+    // Test small value
+    {
+        const value: u128 = 12345;
+        hctr2fp.encodeBaseRadix(value, radix, &buffer);
+        for (buffer) |d| {
+            try testing.expect(d < radix);
+        }
+        const decoded = try hctr2fp.decodeBaseRadix(&buffer, radix);
+        try testing.expectEqual(value, decoded);
+    }
+
+    // Test large value
+    {
+        const value: u128 = 0xDEADBEEFCAFEBABE0123456789ABCDEF;
+        hctr2fp.encodeBaseRadix(value, radix, &buffer);
+        for (buffer) |d| {
+            try testing.expect(d < radix);
+        }
+        const decoded = try hctr2fp.decodeBaseRadix(&buffer, radix);
+        try testing.expectEqual(value, decoded);
+    }
+
+    // Test max u128 - this is where overflow occurs
+    {
+        const value: u128 = std.math.maxInt(u128);
+        hctr2fp.encodeBaseRadix(value, radix, &buffer);
+        for (buffer) |d| {
+            try testing.expect(d < radix);
+        }
+        const decoded = try hctr2fp.decodeBaseRadix(&buffer, radix);
+        try testing.expectEqual(value, decoded);
+    }
+}
+
+// Test encryption/decryption with radix 94
+test "HCTR2-FP encrypt/decrypt round-trip - radix 94" {
+    const Cipher = hctr2fp.Hctr2Fp(aes.Aes128, 94);
+    const key: [16]u8 = @splat(0x42);
+    var cipher = Cipher.init(key);
+
+    const first_len = Cipher.first_block_length;
+    const tail_len = 30;
+    const message_len = first_len + tail_len;
+    var plaintext: [message_len]u8 = undefined;
+
+    // Encode first block from a valid u128
+    const value: u128 = std.math.maxInt(u128);
+    hctr2fp.encodeBaseRadix(value, 94, plaintext[0..first_len]);
+
+    // Fill tail with valid digits
+    for (plaintext[first_len..], 0..) |*p, i| {
+        p.* = @intCast((i * 7) % 94);
+    }
+
+    var ciphertext: [message_len]u8 = undefined;
+    var decrypted: [message_len]u8 = undefined;
+    const tweak = "test_radix_94";
+
+    try cipher.encrypt(&ciphertext, &plaintext, tweak);
+
+    // Verify all ciphertext digits are valid
+    for (ciphertext) |c| {
+        try testing.expect(c < 94);
+    }
+
+    try cipher.decrypt(&decrypted, &ciphertext, tweak);
+
+    try testing.expectEqualSlices(u8, &plaintext, &decrypted);
+}
