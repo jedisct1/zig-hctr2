@@ -6,6 +6,19 @@ pub const Hctr2_128 = hctr2.Hctr2_128;
 pub const Hctr2_256 = hctr2.Hctr2_256;
 pub const Hctr2 = hctr2.Hctr2;
 
+// Export CHCTR2 (Cascaded HCTR2 - Beyond-Birthday-Bound secure)
+const chctr2 = @import("chctr2.zig");
+pub const Chctr2_128 = chctr2.Chctr2_128;
+pub const Chctr2_256 = chctr2.Chctr2_256;
+pub const Chctr2 = chctr2.Chctr2;
+
+// Export HCTR2-TwKD (Tweak-Based Key Derivation - Beyond-Birthday-Bound secure)
+const hctr2_twkd = @import("hctr2_twkd.zig");
+pub const Hctr2TwKD_128 = hctr2_twkd.Hctr2TwKD_128;
+pub const Hctr2TwKD_256 = hctr2_twkd.Hctr2TwKD_256;
+pub const Hctr2TwKD = hctr2_twkd.Hctr2TwKD;
+pub const CencKdf = hctr2_twkd.CencKdf;
+
 // Export HCTR3
 const hctr3 = @import("hctr3.zig");
 pub const Hctr3_128 = hctr3.Hctr3_128;

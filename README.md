@@ -1,8 +1,8 @@
 # zig-hctr2
 
-Pure Zig implementation of HCTR2, HCTR3, and format-preserving variants.
+Pure Zig implementation of HCTR2, HCTR3, and their beyond-birthday-bound secure variants (CHCTR2, HCTR2-TwKD), plus format-preserving variants.
 
-HCTR2 and HCTR3 are length-preserving tweakable wide-block encryption modes. The format-preserving variants (HCTR2-FP and HCTR3-FP) are also length-preserving and additionally preserve character sets (e.g., decimal digits remain decimal).
+HCTR2 and HCTR3 are length-preserving tweakable wide-block encryption modes. CHCTR2 and HCTR2-TwKD are beyond-birthday-bound (BBB) secure variants that achieve approximately 85-bit security instead of HCTR2's 64-bit birthday-bound security. The format-preserving variants (HCTR2-FP and HCTR3-FP) are also length-preserving and additionally preserve character sets (e.g., decimal digits remain decimal).
 
 These modes are designed for full-disk encryption, filename encryption, and other applications where nonces and authentication tags would be impractical.
 
@@ -41,6 +41,32 @@ Use HCTR3 when you need:
 - Applications requiring both confidentiality and commitment properties
 
 HCTR3 derives two keys from the input key and uses SHA-256 to hash tweaks before processing, providing collision resistance in known-key scenarios. This prevents commitment attacks (CMT-4) that break HCTR2 when adversaries can manipulate keys. HCTR3 employs ELK (Encrypted LFSR Keystream) mode with constant-time LFSR implementation instead of XCTR, providing additional security margins in constrained environments.
+
+### CHCTR2 (Cascaded HCTR2)
+
+Use CHCTR2 when you need:
+
+- Beyond-birthday-bound security (~85-bit instead of ~64-bit)
+- No restrictions on tweak usage
+- Multi-user security guarantees
+- Compatibility with NIST's BBB accordion mode requirements
+
+CHCTR2 cascades HCTR2 twice with two independent keys, achieving 2n/3-bit multi-user security. The construction optimizes the middle hash layers: Z_{1,2} = H1(T,R) XOR H2(T,R). Cost is 2 block cipher calls + 3 field multiplications per block.
+
+Reference: "Beyond-Birthday-Bound Security with HCTR2" (ASIACRYPT 2025)
+
+### HCTR2-TwKD (Tweak-Based Key Derivation)
+
+Use HCTR2-TwKD when you need:
+
+- Beyond-birthday-bound security with minimal overhead
+- Same performance as standard HCTR2
+- Tweak-based key derivation (each unique tweak derives a unique key)
+- Applications where the same tweak is not reused excessively
+
+HCTR2-TwKD derives a fresh HCTR2 key from each tweak using the CENC construction, achieving 2n/3-bit security when the number of encryptions per tweak is bounded by approximately 2^42. Cost per block is identical to HCTR2 (1 BC call + 2 field multiplications), with a small per-tweak overhead for key derivation.
+
+Reference: "Beyond-Birthday-Bound Security with HCTR2" (ASIACRYPT 2025)
 
 ### Format-Preserving Variants (HCTR2-FP and HCTR3-FP)
 
@@ -178,6 +204,59 @@ pub fn main() !void {
 }
 ```
 
+### CHCTR2 Encryption (Beyond-Birthday-Bound)
+
+```zig
+const hctr2 = @import("hctr2");
+
+pub fn main() !void {
+    // CHCTR2 requires two keys (combined into one 32-byte key for AES-128)
+    const key: [32]u8 = @splat(0x00);  // K1 || K2
+    var cipher = hctr2.Chctr2_128.init(key);
+
+    const plaintext = "BBB-secure data!";
+    const tweak = "any-tweak-value";
+    var ciphertext: [plaintext.len]u8 = undefined;
+
+    try cipher.encrypt(&ciphertext, plaintext, tweak);
+
+    var decrypted: [plaintext.len]u8 = undefined;
+    try cipher.decrypt(&decrypted, &ciphertext, tweak);
+
+    // Or initialize with separate keys:
+    const key1: [16]u8 = @splat(0x01);
+    const key2: [16]u8 = @splat(0x02);
+    var cipher2 = hctr2.Chctr2_128.initSplit(key1, key2);
+}
+```
+
+### HCTR2-TwKD Encryption (Tweak-Based Key Derivation)
+
+```zig
+const hctr2 = @import("hctr2");
+
+pub fn main() !void {
+    // Master key for key derivation
+    const master_key: [16]u8 = @splat(0x00);
+    const cipher = hctr2.Hctr2TwKD_128.init(master_key);
+
+    const plaintext = "Sector data here";
+    const tweak = "sector-42";  // Max 14 bytes for KDF tweak
+    var ciphertext: [plaintext.len]u8 = undefined;
+
+    // Each unique tweak derives a unique HCTR2 key
+    try cipher.encrypt(&ciphertext, plaintext, tweak);
+
+    var decrypted: [plaintext.len]u8 = undefined;
+    try cipher.decrypt(&decrypted, &ciphertext, tweak);
+
+    // For longer tweaks, use split mode:
+    const kdf_tweak = "short-part";  // Used for key derivation (max 14 bytes)
+    const hctr2_tweak = "longer-tweak-passed-to-hctr2";  // Any length
+    try cipher.encryptSplit(&ciphertext, plaintext, kdf_tweak, hctr2_tweak);
+}
+```
+
 ### Format-Preserving Encryption (Decimal)
 
 ```zig
@@ -261,3 +340,4 @@ Run `zig build bench -Doptimize=ReleaseFast` to measure performance on your hard
 
 - [Length-preserving encryption with HCTR2](https://eprint.iacr.org/2021/1441) - Paul Crowley, Nathan Huckleberry, Eric Biggers (IACR ePrint Archive)
 - [HCTR3](https://csrc.nist.gov/files/pubs/sp/800/197/iprd/docs/3_samvadini.pdf) - NIST SP 800-197 Workshop presentation
+- [Beyond-Birthday-Bound Security with HCTR2](https://doi.org/10.1007/978-3-031-85848-6_1) - Chen, Y.L., et al. (ASIACRYPT 2025, LNCS 16245, pp. 3-34)
