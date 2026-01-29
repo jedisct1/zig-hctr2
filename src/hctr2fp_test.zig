@@ -487,7 +487,7 @@ test "overflow handling with radix 256 (max radix)" {
     var cipher256 = Cipher256.init(key256);
 
     // Create a plaintext with max digit values (255) to test overflow
-    const plaintext256 = [_]u8{255} ** 64;
+    const plaintext256: [64]u8 = @splat(255);
     const tweak = "overflow-test";
     var ciphertext256: [64]u8 = undefined;
     var decrypted256: [64]u8 = undefined;

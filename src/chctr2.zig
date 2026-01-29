@@ -392,7 +392,7 @@ pub fn Chctr2(comptime Aes: anytype) type {
 }
 
 test "CHCTR2-128 encrypt/decrypt round-trip" {
-    const key = [_]u8{0} ** 32; // 32 bytes for two AES-128 keys
+    const key = @as([32]u8, @splat(0)); // 32 bytes for two AES-128 keys
     var state = Chctr2_128.init(key);
 
     const plaintext = "Hello, CHCTR2 World!";
@@ -408,7 +408,7 @@ test "CHCTR2-128 encrypt/decrypt round-trip" {
 }
 
 test "CHCTR2-256 encrypt/decrypt round-trip" {
-    const key = [_]u8{0} ** 64; // 64 bytes for two AES-256 keys
+    const key = @as([64]u8, @splat(0)); // 64 bytes for two AES-256 keys
     var state = Chctr2_256.init(key);
 
     const plaintext = "Hello, CHCTR2-256 World!";
@@ -424,11 +424,11 @@ test "CHCTR2-256 encrypt/decrypt round-trip" {
 }
 
 test "CHCTR2-128 minimum block size" {
-    const key = [_]u8{0} ** 32;
+    const key = @as([32]u8, @splat(0));
     var state = Chctr2_128.init(key);
 
     // Exactly 16 bytes (minimum)
-    const plaintext = [_]u8{0x42} ** 16;
+    const plaintext = @as([16]u8, @splat(0x42));
     var ciphertext: [16]u8 = undefined;
     var decrypted: [16]u8 = undefined;
 
@@ -439,20 +439,20 @@ test "CHCTR2-128 minimum block size" {
 }
 
 test "CHCTR2-128 input too short" {
-    const key = [_]u8{0} ** 32;
+    const key = @as([32]u8, @splat(0));
     var state = Chctr2_128.init(key);
 
-    const plaintext = [_]u8{0x42} ** 15; // Too short
+    const plaintext = @as([15]u8, @splat(0x42)); // Too short
     var ciphertext: [15]u8 = undefined;
 
     try std.testing.expectError(error.InputTooShort, state.encrypt(&ciphertext, &plaintext, ""));
 }
 
 test "CHCTR2-128 different tweaks produce different ciphertexts" {
-    const key = [_]u8{0} ** 32;
+    const key = @as([32]u8, @splat(0));
     var state = Chctr2_128.init(key);
 
-    const plaintext = [_]u8{0x42} ** 32;
+    const plaintext = @as([32]u8, @splat(0x42));
     var ciphertext1: [32]u8 = undefined;
     var ciphertext2: [32]u8 = undefined;
 
@@ -463,8 +463,8 @@ test "CHCTR2-128 different tweaks produce different ciphertexts" {
 }
 
 test "CHCTR2-128 initSplit" {
-    const key1 = [_]u8{0x01} ** 16;
-    const key2 = [_]u8{0x02} ** 16;
+    const key1 = @as([16]u8, @splat(0x01));
+    const key2 = @as([16]u8, @splat(0x02));
     var state = Chctr2_128.initSplit(key1, key2);
 
     const plaintext = "Test split key init";
@@ -478,11 +478,11 @@ test "CHCTR2-128 initSplit" {
 }
 
 test "CHCTR2-128 large message" {
-    const key = [_]u8{0} ** 32;
+    const key = @as([32]u8, @splat(0));
     var state = Chctr2_128.init(key);
 
     // 1KB message
-    const plaintext = [_]u8{0xAB} ** 1024;
+    const plaintext = @as([1024]u8, @splat(0xAB));
     var ciphertext: [1024]u8 = undefined;
     var decrypted: [1024]u8 = undefined;
 

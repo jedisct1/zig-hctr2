@@ -16,9 +16,12 @@ pub const Hctr2TwKD_256 = Hctr2TwKD(aes.Aes256, CencKdf(aes.Aes256));
 
 /// CENC-based Key Derivation Function.
 ///
-/// Derives an AES key from a master key and a tweak using CENC construction:
+/// Derives an AES key from a master key and a 126-bit tweak using the CENC construction:
 /// For AES-128: K = E_L(00||T) ⊕ E_L(01||T)
 /// For AES-256: K = (E_L(00||T) ⊕ E_L(01||T)) || (E_L(00||T) ⊕ E_L(10||T))
+///
+/// The 126-bit tweak T is encoded as 16 bytes with the top two bits of the first
+/// byte set to zero. The 2-bit prefix (00/01/10) occupies those top bits.
 ///
 /// This provides beyond-birthday-bound security when the same tweak
 /// is not used more than approximately 2^(n/3) times.
@@ -38,8 +41,9 @@ pub fn CencKdf(comptime Aes: anytype) type {
         /// Derived key length (same as AES key length).
         pub const key_length = derived_key_length;
 
-        /// Maximum tweak length (126 bits = 15 bytes + 6 bits, but we use 14 bytes for simplicity).
-        pub const max_tweak_length = 14;
+        /// Tweak length in bytes (126 bits packed into 16 bytes).
+        pub const tweak_length = 16;
+        pub const tweak_bits = 126;
 
         /// Initialize the KDF with a master key.
         pub fn init(master_key: [master_key_length]u8) Self {
@@ -51,25 +55,14 @@ pub fn CencKdf(comptime Aes: anytype) type {
         /// Derive a key from a tweak.
         ///
         /// Parameters:
-        /// - `tweak`: Tweak value (max 14 bytes)
+        /// - `tweak`: 126-bit tweak encoded in 16 bytes (top 2 bits of first byte must be zero)
         ///
         /// Returns: Derived AES key.
         pub fn deriveKey(self: *const Self, tweak: []const u8) [key_length]u8 {
-            assert(tweak.len <= max_tweak_length);
+            assert(validateTweak(tweak));
 
-            // Prepare blocks with prefix || tweak || padding
-            // Block format: [2-bit prefix][126-bit tweak space]
-            // We use: [1 byte prefix][14 bytes tweak][1 byte padding]
-            var block0: [aes_block_length]u8 = @splat(0);
-            var block1: [aes_block_length]u8 = @splat(0);
-
-            // Set prefix bytes (00 and 01 for first 128 bits)
-            block0[0] = 0x00;
-            block1[0] = 0x01;
-
-            // Copy tweak to both blocks (starting at byte 1)
-            @memcpy(block0[1..][0..tweak.len], tweak);
-            @memcpy(block1[1..][0..tweak.len], tweak);
+            var block0 = makeBlock(tweak, 0);
+            var block1 = makeBlock(tweak, 1);
 
             // Encrypt blocks
             var enc0: [aes_block_length]u8 = undefined;
@@ -85,9 +78,7 @@ pub fn CencKdf(comptime Aes: anytype) type {
 
             // For 256-bit keys, derive second half
             if (key_length > aes_block_length) {
-                var block2: [aes_block_length]u8 = @splat(0);
-                block2[0] = 0x02; // Prefix 10 (binary)
-                @memcpy(block2[1..][0..tweak.len], tweak);
+                var block2 = makeBlock(tweak, 2);
 
                 var enc2: [aes_block_length]u8 = undefined;
                 self.ks.encrypt(&enc2, &block2);
@@ -99,6 +90,18 @@ pub fn CencKdf(comptime Aes: anytype) type {
             }
 
             return derived;
+        }
+
+        pub fn validateTweak(tweak: []const u8) bool {
+            return tweak.len == tweak_length and (tweak[0] & 0xC0) == 0;
+        }
+
+        fn makeBlock(tweak: []const u8, prefix: u8) [aes_block_length]u8 {
+            assert(prefix <= 2);
+            var block: [aes_block_length]u8 = undefined;
+            @memcpy(block[0..], tweak);
+            block[0] = (block[0] & 0x3F) | (prefix << 6);
+            return block;
         }
     };
 }
@@ -145,8 +148,8 @@ pub fn Hctr2TwKD(comptime Aes: anytype, comptime Kdf: anytype) type {
         /// AES block length in bytes (always 16).
         pub const block_length = aes_block_length;
 
-        /// Maximum tweak length for key derivation.
-        pub const max_tweak_length = Kdf.max_tweak_length;
+        /// Fixed tweak length for key derivation (t0 in the paper).
+        pub const kdf_tweak_length = Kdf.tweak_length;
 
         /// Initialize HCTR2-TwKD cipher state from a master key.
         ///
@@ -162,30 +165,40 @@ pub fn Hctr2TwKD(comptime Aes: anytype, comptime Kdf: anytype) type {
 
         /// Encrypt plaintext to ciphertext using HCTR2-TwKD.
         ///
-        /// The tweak is used for key derivation. Each unique tweak derives a unique
-        /// HCTR2 key, providing beyond-birthday-bound security when the same tweak
-        /// is not reused excessively (limit: ~2^42 encryptions per tweak).
+        /// The tweak is partitioned into:
+        /// - T0: first `kdf_tweak_length` bytes (used for key derivation)
+        /// - T*: remaining bytes (passed to underlying HCTR2)
+        ///
+        /// Each unique T0 derives a unique HCTR2 key, providing beyond-birthday-bound
+        /// security when the same T0 is not reused excessively (limit: ~2^42 encryptions
+        /// per tweak for AES).
         ///
         /// Parameters:
         /// - `state`: Initialized cipher state
         /// - `ciphertext`: Output buffer (must be same length as plaintext)
         /// - `plaintext`: Input data to encrypt (minimum 16 bytes)
-        /// - `tweak`: Tweak value for key derivation (max 14 bytes)
+        /// - `tweak`: Full tweak (must be at least `kdf_tweak_length` bytes)
         ///
         /// Returns: `error.InputTooShort` if plaintext is less than 16 bytes,
-        ///          `error.TweakTooLong` if tweak exceeds max_tweak_length.
+        ///          `error.TweakTooShort` if tweak is shorter than `kdf_tweak_length`,
+        ///          `error.InvalidTweak` if the KDF-specific tweak format is invalid.
         pub fn encrypt(state: *const State, ciphertext: []u8, plaintext: []const u8, tweak: []const u8) !void {
-            if (tweak.len > max_tweak_length) {
-                return error.TweakTooLong;
+            if (tweak.len < kdf_tweak_length) {
+                return error.TweakTooShort;
             }
 
-            // Derive key from tweak
-            const derived_key = state.kdf.deriveKey(tweak);
+            const kdf_tweak = tweak[0..kdf_tweak_length];
+            if (!validateKdfTweak(kdf_tweak)) {
+                return error.InvalidTweak;
+            }
+
+            // Derive key from T0
+            const derived_key = state.kdf.deriveKey(kdf_tweak);
 
             // Initialize HCTR2 with derived key and encrypt
-            // Use empty tweak for HCTR2 since tweak info is in the derived key
+            // Pass T* as the HCTR2 tweak
             var hctr2 = Hctr2.init(derived_key);
-            try hctr2.encrypt(ciphertext, plaintext, &.{});
+            try hctr2.encrypt(ciphertext, plaintext, tweak[kdf_tweak_length..]);
         }
 
         /// Decrypt ciphertext to plaintext using HCTR2-TwKD.
@@ -194,27 +207,33 @@ pub fn Hctr2TwKD(comptime Aes: anytype, comptime Kdf: anytype) type {
         /// - `state`: Initialized cipher state
         /// - `plaintext`: Output buffer (must be same length as ciphertext)
         /// - `ciphertext`: Input data to decrypt (minimum 16 bytes)
-        /// - `tweak`: Tweak value used during encryption (max 14 bytes)
+        /// - `tweak`: Full tweak used during encryption (must be at least `kdf_tweak_length` bytes)
         ///
         /// Returns: `error.InputTooShort` if ciphertext is less than 16 bytes,
-        ///          `error.TweakTooLong` if tweak exceeds max_tweak_length.
+        ///          `error.TweakTooShort` if tweak is shorter than `kdf_tweak_length`,
+        ///          `error.InvalidTweak` if the KDF-specific tweak format is invalid.
         pub fn decrypt(state: *const State, plaintext: []u8, ciphertext: []const u8, tweak: []const u8) !void {
-            if (tweak.len > max_tweak_length) {
-                return error.TweakTooLong;
+            if (tweak.len < kdf_tweak_length) {
+                return error.TweakTooShort;
             }
 
-            // Derive key from tweak
-            const derived_key = state.kdf.deriveKey(tweak);
+            const kdf_tweak = tweak[0..kdf_tweak_length];
+            if (!validateKdfTweak(kdf_tweak)) {
+                return error.InvalidTweak;
+            }
+
+            // Derive key from T0
+            const derived_key = state.kdf.deriveKey(kdf_tweak);
 
             // Initialize HCTR2 with derived key and decrypt
             var hctr2 = Hctr2.init(derived_key);
-            try hctr2.decrypt(plaintext, ciphertext, &.{});
+            try hctr2.decrypt(plaintext, ciphertext, tweak[kdf_tweak_length..]);
         }
 
         /// Encrypt with split tweak: part for key derivation, part for HCTR2.
         ///
         /// This allows using a longer tweak by splitting it into:
-        /// - `kdf_tweak`: Used for key derivation (max 14 bytes)
+        /// - `kdf_tweak`: Used for key derivation (must be `kdf_tweak_length` bytes)
         /// - `hctr2_tweak`: Passed to underlying HCTR2 (any length)
         ///
         /// Use this when you need longer tweaks or want finer control over
@@ -226,8 +245,14 @@ pub fn Hctr2TwKD(comptime Aes: anytype, comptime Kdf: anytype) type {
             kdf_tweak: []const u8,
             hctr2_tweak: []const u8,
         ) !void {
-            if (kdf_tweak.len > max_tweak_length) {
+            if (kdf_tweak.len < kdf_tweak_length) {
+                return error.TweakTooShort;
+            }
+            if (kdf_tweak.len > kdf_tweak_length) {
                 return error.TweakTooLong;
+            }
+            if (!validateKdfTweak(kdf_tweak)) {
+                return error.InvalidTweak;
             }
 
             const derived_key = state.kdf.deriveKey(kdf_tweak);
@@ -243,161 +268,209 @@ pub fn Hctr2TwKD(comptime Aes: anytype, comptime Kdf: anytype) type {
             kdf_tweak: []const u8,
             hctr2_tweak: []const u8,
         ) !void {
-            if (kdf_tweak.len > max_tweak_length) {
+            if (kdf_tweak.len < kdf_tweak_length) {
+                return error.TweakTooShort;
+            }
+            if (kdf_tweak.len > kdf_tweak_length) {
                 return error.TweakTooLong;
+            }
+            if (!validateKdfTweak(kdf_tweak)) {
+                return error.InvalidTweak;
             }
 
             const derived_key = state.kdf.deriveKey(kdf_tweak);
             var hctr2 = Hctr2.init(derived_key);
             try hctr2.decrypt(plaintext, ciphertext, hctr2_tweak);
         }
+
+        fn validateKdfTweak(kdf_tweak: []const u8) bool {
+            if (@hasDecl(Kdf, "validateTweak")) {
+                return Kdf.validateTweak(kdf_tweak);
+            }
+            return kdf_tweak.len == kdf_tweak_length;
+        }
     };
 }
 
 test "HCTR2-TwKD-128 encrypt/decrypt round-trip" {
-    const key = [_]u8{0} ** 16;
+    const key = @as([16]u8, @splat(0));
     const state = Hctr2TwKD_128.init(key);
 
     const plaintext = "Hello, HCTR2-TwKD!";
     var ciphertext: [plaintext.len]u8 = undefined;
     var decrypted: [plaintext.len]u8 = undefined;
 
-    const tweak = "test tweak";
+    const tweak = @as([20]u8, @splat(0x01));
 
-    try state.encrypt(&ciphertext, plaintext, tweak);
-    try state.decrypt(&decrypted, &ciphertext, tweak);
+    try state.encrypt(&ciphertext, plaintext, &tweak);
+    try state.decrypt(&decrypted, &ciphertext, &tweak);
 
     try std.testing.expectEqualSlices(u8, plaintext, &decrypted);
 }
 
 test "HCTR2-TwKD-256 encrypt/decrypt round-trip" {
-    const key = [_]u8{0} ** 32;
+    const key = @as([32]u8, @splat(0));
     const state = Hctr2TwKD_256.init(key);
 
     const plaintext = "Hello, HCTR2-TwKD-256!";
     var ciphertext: [plaintext.len]u8 = undefined;
     var decrypted: [plaintext.len]u8 = undefined;
 
-    const tweak = "test tweak 256";
+    const tweak = @as([20]u8, @splat(0x02));
 
-    try state.encrypt(&ciphertext, plaintext, tweak);
-    try state.decrypt(&decrypted, &ciphertext, tweak);
+    try state.encrypt(&ciphertext, plaintext, &tweak);
+    try state.decrypt(&decrypted, &ciphertext, &tweak);
 
     try std.testing.expectEqualSlices(u8, plaintext, &decrypted);
 }
 
 test "HCTR2-TwKD-128 minimum block size" {
-    const key = [_]u8{0} ** 16;
+    const key = @as([16]u8, @splat(0));
     const state = Hctr2TwKD_128.init(key);
 
-    const plaintext = [_]u8{0x42} ** 16;
+    const plaintext = @as([16]u8, @splat(0x42));
     var ciphertext: [16]u8 = undefined;
     var decrypted: [16]u8 = undefined;
+    const tweak = @as([16]u8, @splat(0x03));
 
-    try state.encrypt(&ciphertext, &plaintext, "tweak");
-    try state.decrypt(&decrypted, &ciphertext, "tweak");
+    try state.encrypt(&ciphertext, &plaintext, &tweak);
+    try state.decrypt(&decrypted, &ciphertext, &tweak);
 
     try std.testing.expectEqualSlices(u8, &plaintext, &decrypted);
 }
 
 test "HCTR2-TwKD-128 input too short" {
-    const key = [_]u8{0} ** 16;
+    const key = @as([16]u8, @splat(0));
     const state = Hctr2TwKD_128.init(key);
 
-    const plaintext = [_]u8{0x42} ** 15;
+    const plaintext = @as([15]u8, @splat(0x42));
     var ciphertext: [15]u8 = undefined;
+    const tweak = @as([16]u8, @splat(0x04));
 
-    try std.testing.expectError(error.InputTooShort, state.encrypt(&ciphertext, &plaintext, "tweak"));
+    try std.testing.expectError(error.InputTooShort, state.encrypt(&ciphertext, &plaintext, &tweak));
 }
 
-test "HCTR2-TwKD-128 tweak too long" {
-    const key = [_]u8{0} ** 16;
+test "HCTR2-TwKD-128 tweak too short" {
+    const key = @as([16]u8, @splat(0));
     const state = Hctr2TwKD_128.init(key);
 
-    const plaintext = [_]u8{0x42} ** 16;
+    const plaintext = @as([16]u8, @splat(0x42));
     var ciphertext: [16]u8 = undefined;
 
-    // 15 bytes exceeds max_tweak_length of 14
-    const long_tweak = [_]u8{0} ** 15;
-    try std.testing.expectError(error.TweakTooLong, state.encrypt(&ciphertext, &plaintext, &long_tweak));
+    const short_tweak = @as([8]u8, @splat(0));
+    try std.testing.expectError(error.TweakTooShort, state.encrypt(&ciphertext, &plaintext, &short_tweak));
+}
+
+test "HCTR2-TwKD-128 invalid KDF tweak bits" {
+    const key = @as([16]u8, @splat(0));
+    const state = Hctr2TwKD_128.init(key);
+
+    const plaintext = @as([16]u8, @splat(0x42));
+    var ciphertext: [16]u8 = undefined;
+
+    var bad_tweak = @as([16]u8, @splat(0));
+    bad_tweak[0] = 0xC0; // top two bits must be zero for CENC
+    try std.testing.expectError(error.InvalidTweak, state.encrypt(&ciphertext, &plaintext, &bad_tweak));
+}
+
+test "HCTR2-TwKD-128 split tweak too long" {
+    const key = @as([16]u8, @splat(0));
+    const state = Hctr2TwKD_128.init(key);
+
+    const plaintext = "split tweak length";
+    var ciphertext: [plaintext.len]u8 = undefined;
+
+    const kdf_tweak = @as([17]u8, @splat(0x01));
+    try std.testing.expectError(
+        error.TweakTooLong,
+        state.encryptSplit(&ciphertext, plaintext, &kdf_tweak, "hctr2"),
+    );
 }
 
 test "HCTR2-TwKD-128 different tweaks produce different ciphertexts" {
-    const key = [_]u8{0} ** 16;
+    const key = @as([16]u8, @splat(0));
     const state = Hctr2TwKD_128.init(key);
 
-    const plaintext = [_]u8{0x42} ** 32;
+    const plaintext = @as([32]u8, @splat(0x42));
     var ciphertext1: [32]u8 = undefined;
     var ciphertext2: [32]u8 = undefined;
 
-    try state.encrypt(&ciphertext1, &plaintext, "tweak1");
-    try state.encrypt(&ciphertext2, &plaintext, "tweak2");
+    const tweak1 = @as([20]u8, @splat(0x05));
+    const tweak2 = @as([20]u8, @splat(0x06));
+    try state.encrypt(&ciphertext1, &plaintext, &tweak1);
+    try state.encrypt(&ciphertext2, &plaintext, &tweak2);
 
     try std.testing.expect(!std.mem.eql(u8, &ciphertext1, &ciphertext2));
 }
 
 test "HCTR2-TwKD-128 split tweak" {
-    const key = [_]u8{0} ** 16;
+    const key = @as([16]u8, @splat(0));
     const state = Hctr2TwKD_128.init(key);
 
     const plaintext = "Test split tweak mode";
     var ciphertext: [plaintext.len]u8 = undefined;
     var decrypted: [plaintext.len]u8 = undefined;
 
-    const kdf_tweak = "kdf part";
-    const hctr2_tweak = "hctr2 part - can be longer than 14 bytes!";
+    const kdf_tweak = @as([16]u8, @splat(0x07));
+    const hctr2_tweak = "hctr2 part - can be any length";
 
-    try state.encryptSplit(&ciphertext, plaintext, kdf_tweak, hctr2_tweak);
-    try state.decryptSplit(&decrypted, &ciphertext, kdf_tweak, hctr2_tweak);
+    try state.encryptSplit(&ciphertext, plaintext, &kdf_tweak, hctr2_tweak);
+    try state.decryptSplit(&decrypted, &ciphertext, &kdf_tweak, hctr2_tweak);
 
     try std.testing.expectEqualSlices(u8, plaintext, &decrypted);
 }
 
 test "HCTR2-TwKD-128 large message" {
-    const key = [_]u8{0} ** 16;
+    const key = @as([16]u8, @splat(0));
     const state = Hctr2TwKD_128.init(key);
 
-    const plaintext = [_]u8{0xAB} ** 1024;
+    const plaintext = @as([1024]u8, @splat(0xAB));
     var ciphertext: [1024]u8 = undefined;
     var decrypted: [1024]u8 = undefined;
+    const tweak = @as([16]u8, @splat(0x08));
 
-    try state.encrypt(&ciphertext, &plaintext, "large tweak");
-    try state.decrypt(&decrypted, &ciphertext, "large tweak");
+    try state.encrypt(&ciphertext, &plaintext, &tweak);
+    try state.decrypt(&decrypted, &ciphertext, &tweak);
 
     try std.testing.expectEqualSlices(u8, &plaintext, &decrypted);
 }
 
 test "CENC KDF derives different keys for different tweaks" {
     const Kdf = CencKdf(aes.Aes128);
-    const master_key = [_]u8{0} ** 16;
+    const master_key = @as([16]u8, @splat(0));
     const kdf = Kdf.init(master_key);
 
-    const key1 = kdf.deriveKey("tweak1");
-    const key2 = kdf.deriveKey("tweak2");
+    const tweak1 = @as([16]u8, @splat(0x01));
+    const tweak2 = @as([16]u8, @splat(0x02));
+    const key1 = kdf.deriveKey(&tweak1);
+    const key2 = kdf.deriveKey(&tweak2);
 
     try std.testing.expect(!std.mem.eql(u8, &key1, &key2));
 }
 
 test "CENC KDF deterministic" {
     const Kdf = CencKdf(aes.Aes128);
-    const master_key = [_]u8{0} ** 16;
+    const master_key = @as([16]u8, @splat(0));
     const kdf = Kdf.init(master_key);
 
-    const key1 = kdf.deriveKey("same tweak");
-    const key2 = kdf.deriveKey("same tweak");
+    const tweak = @as([16]u8, @splat(0x03));
+    const key1 = kdf.deriveKey(&tweak);
+    const key2 = kdf.deriveKey(&tweak);
 
     try std.testing.expectEqualSlices(u8, &key1, &key2);
 }
 
 test "CENC KDF 256-bit key derivation" {
     const Kdf = CencKdf(aes.Aes256);
-    const master_key = [_]u8{0} ** 32;
+    const master_key = @as([32]u8, @splat(0));
     const kdf = Kdf.init(master_key);
 
-    const key = kdf.deriveKey("test");
+    const tweak = @as([16]u8, @splat(0x04));
+    const key = kdf.deriveKey(&tweak);
     try std.testing.expect(key.len == 32);
 
     // Verify different tweaks produce different keys
-    const key2 = kdf.deriveKey("test2");
+    const tweak2 = @as([16]u8, @splat(0x05));
+    const key2 = kdf.deriveKey(&tweak2);
     try std.testing.expect(!std.mem.eql(u8, &key, &key2));
 }

@@ -64,7 +64,7 @@ Use HCTR2-TwKD when you need:
 - Tweak-based key derivation (each unique tweak derives a unique key)
 - Applications where the same tweak is not reused excessively
 
-HCTR2-TwKD derives a fresh HCTR2 key from each tweak using the CENC construction, achieving 2n/3-bit security when the number of encryptions per tweak is bounded by approximately 2^42. Cost per block is identical to HCTR2 (1 BC call + 2 field multiplications), with a small per-tweak overhead for key derivation.
+HCTR2-TwKD derives a fresh HCTR2 key from the first 126 bits of the tweak (T0) using the CENC construction, and passes the remaining tweak bytes (T*) to HCTR2. It achieves 2n/3-bit security when the number of encryptions per T0 is bounded by approximately 2^42. Cost per block is identical to HCTR2 (1 BC call + 2 field multiplications), with a small per-tweak overhead for key derivation.
 
 Reference: "Beyond-Birthday-Bound Security with HCTR2" (ASIACRYPT 2025)
 
@@ -177,11 +177,11 @@ pub fn main() !void {
     const tweak = "sector-42";
     var ciphertext: [plaintext.len]u8 = undefined;
 
-    try cipher.encrypt(&ciphertext, plaintext, tweak);
+    try cipher.encrypt(&ciphertext, plaintext, &tweak);
 
     // Decrypt the message
     var decrypted: [plaintext.len]u8 = undefined;
-    try cipher.decrypt(&decrypted, &ciphertext, tweak);
+    try cipher.decrypt(&decrypted, &ciphertext, &tweak);
 }
 ```
 
@@ -241,7 +241,9 @@ pub fn main() !void {
     const cipher = hctr2.Hctr2TwKD_128.init(master_key);
 
     const plaintext = "Sector data here";
-    const tweak = "sector-42";  // Max 14 bytes for KDF tweak
+    // Full tweak: first 16 bytes (T0) are used for key derivation, remainder (T*) is passed to HCTR2.
+    // For CENC, the top two bits of the first byte in T0 must be zero.
+    const tweak = [_]u8{0x01} ** 20;
     var ciphertext: [plaintext.len]u8 = undefined;
 
     // Each unique tweak derives a unique HCTR2 key
@@ -251,9 +253,9 @@ pub fn main() !void {
     try cipher.decrypt(&decrypted, &ciphertext, tweak);
 
     // For longer tweaks, use split mode:
-    const kdf_tweak = "short-part";  // Used for key derivation (max 14 bytes)
-    const hctr2_tweak = "longer-tweak-passed-to-hctr2";  // Any length
-    try cipher.encryptSplit(&ciphertext, plaintext, kdf_tweak, hctr2_tweak);
+    const kdf_tweak = [_]u8{0x02} ** 16; // T0 for key derivation (126 bits packed in 16 bytes)
+    const hctr2_tweak = "longer-tweak-passed-to-hctr2"; // Any length
+    try cipher.encryptSplit(&ciphertext, plaintext, &kdf_tweak, hctr2_tweak);
 }
 ```
 
