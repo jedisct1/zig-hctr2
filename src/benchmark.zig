@@ -4,24 +4,26 @@ const hctr3 = @import("hctr3.zig");
 const hctr2fp = @import("hctr2fp.zig");
 const hctr3fp = @import("hctr3fp.zig");
 
-const Timer = std.time.Timer;
+const Io = std.Io;
 const print = std.debug.print;
 
 const message_sizes = [_]usize{ 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576 };
 const message_size_names = [_][]const u8{ "16B", "64B", "256B", "1KB", "4KB", "16KB", "64KB", "256KB", "1MB" };
 
-fn benchmarkHCTR2_128(allocator: std.mem.Allocator) !void {
+fn readNs(io: Io) i96 {
+    return Io.Clock.awake.now(io).nanoseconds;
+}
+
+fn benchmarkHCTR2_128(allocator: std.mem.Allocator, io: Io) !void {
     print("\n=== HCTR2 AES-128 Benchmarks ===\n", .{});
 
     const key: [16]u8 = @splat(0x00);
     const tweak: [16]u8 = @splat(0x00);
 
-    var timer = try Timer.start();
-
     // Benchmark initialization
-    const start_init = timer.read();
+    const start_init = readNs(io);
     var cipher = hctr2.Hctr2_128.init(key);
-    const init_time = timer.read() - start_init;
+    const init_time = readNs(io) - start_init;
     print("Initialization: {d:.3} µs\n\n", .{@as(f64, @floatFromInt(init_time)) / 1000.0});
 
     print("{s:>10} | {s:>12} | {s:>12} | {s:>12} | {s:>12}\n", .{ "Size", "Encrypt (µs)", "Decrypt (µs)", "Enc MB/s", "Dec MB/s" });
@@ -35,34 +37,29 @@ fn benchmarkHCTR2_128(allocator: std.mem.Allocator) !void {
         const plaintext = try allocator.alloc(u8, size);
         defer allocator.free(plaintext);
 
-        // Fill with test data
         for (message) |*b| {
             b.* = 0x42;
         }
 
-        // Warmup
         try cipher.encrypt(ciphertext, message, &tweak);
         try cipher.decrypt(plaintext, ciphertext, &tweak);
 
-        // Benchmark encryption
         const iterations: usize = if (size < 1024) 10000 else if (size < 65536) 1000 else 100;
 
-        const start_enc = timer.read();
+        const start_enc = readNs(io);
         for (0..iterations) |_| {
             try cipher.encrypt(ciphertext, message, &tweak);
         }
-        const enc_time = timer.read() - start_enc;
+        const enc_time = readNs(io) - start_enc;
         const enc_time_per_op = @as(f64, @floatFromInt(enc_time)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
 
-        // Benchmark decryption
-        const start_dec = timer.read();
+        const start_dec = readNs(io);
         for (0..iterations) |_| {
             try cipher.decrypt(plaintext, ciphertext, &tweak);
         }
-        const dec_time = timer.read() - start_dec;
+        const dec_time = readNs(io) - start_dec;
         const dec_time_per_op = @as(f64, @floatFromInt(dec_time)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
 
-        // Calculate throughput in MB/s
         const enc_mbps = (@as(f64, @floatFromInt(size)) / 1048576.0) / (enc_time_per_op / 1000000.0);
         const dec_mbps = (@as(f64, @floatFromInt(size)) / 1048576.0) / (dec_time_per_op / 1000000.0);
 
@@ -76,18 +73,15 @@ fn benchmarkHCTR2_128(allocator: std.mem.Allocator) !void {
     }
 }
 
-fn benchmarkHCTR2_256(allocator: std.mem.Allocator) !void {
+fn benchmarkHCTR2_256(allocator: std.mem.Allocator, io: Io) !void {
     print("\n=== HCTR2 AES-256 Benchmarks ===\n", .{});
 
     const key: [32]u8 = @splat(0x00);
     const tweak: [16]u8 = @splat(0x00);
 
-    var timer = try Timer.start();
-
-    // Benchmark initialization
-    const start_init = timer.read();
+    const start_init = readNs(io);
     var cipher = hctr2.Hctr2_256.init(key);
-    const init_time = timer.read() - start_init;
+    const init_time = readNs(io) - start_init;
     print("Initialization: {d:.3} µs\n\n", .{@as(f64, @floatFromInt(init_time)) / 1000.0});
 
     print("{s:>10} | {s:>12} | {s:>12} | {s:>12} | {s:>12}\n", .{ "Size", "Encrypt (µs)", "Decrypt (µs)", "Enc MB/s", "Dec MB/s" });
@@ -101,34 +95,29 @@ fn benchmarkHCTR2_256(allocator: std.mem.Allocator) !void {
         const plaintext = try allocator.alloc(u8, size);
         defer allocator.free(plaintext);
 
-        // Fill with test data
         for (message) |*b| {
             b.* = 0x42;
         }
 
-        // Warmup
         try cipher.encrypt(ciphertext, message, &tweak);
         try cipher.decrypt(plaintext, ciphertext, &tweak);
 
-        // Benchmark encryption
         const iterations: usize = if (size < 1024) 10000 else if (size < 65536) 1000 else 100;
 
-        const start_enc = timer.read();
+        const start_enc = readNs(io);
         for (0..iterations) |_| {
             try cipher.encrypt(ciphertext, message, &tweak);
         }
-        const enc_time = timer.read() - start_enc;
+        const enc_time = readNs(io) - start_enc;
         const enc_time_per_op = @as(f64, @floatFromInt(enc_time)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
 
-        // Benchmark decryption
-        const start_dec = timer.read();
+        const start_dec = readNs(io);
         for (0..iterations) |_| {
             try cipher.decrypt(plaintext, ciphertext, &tweak);
         }
-        const dec_time = timer.read() - start_dec;
+        const dec_time = readNs(io) - start_dec;
         const dec_time_per_op = @as(f64, @floatFromInt(dec_time)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
 
-        // Calculate throughput in MB/s
         const enc_mbps = (@as(f64, @floatFromInt(size)) / 1048576.0) / (enc_time_per_op / 1000000.0);
         const dec_mbps = (@as(f64, @floatFromInt(size)) / 1048576.0) / (dec_time_per_op / 1000000.0);
 
@@ -142,18 +131,15 @@ fn benchmarkHCTR2_256(allocator: std.mem.Allocator) !void {
     }
 }
 
-fn benchmarkHCTR3_128(allocator: std.mem.Allocator) !void {
+fn benchmarkHCTR3_128(allocator: std.mem.Allocator, io: Io) !void {
     print("\n=== HCTR3 AES-128 Benchmarks ===\n", .{});
 
     const key: [16]u8 = @splat(0x00);
     const tweak: [16]u8 = @splat(0x00);
 
-    var timer = try Timer.start();
-
-    // Benchmark initialization
-    const start_init = timer.read();
+    const start_init = readNs(io);
     var cipher = hctr3.Hctr3_128.init(key);
-    const init_time = timer.read() - start_init;
+    const init_time = readNs(io) - start_init;
     print("Initialization: {d:.3} µs\n\n", .{@as(f64, @floatFromInt(init_time)) / 1000.0});
 
     print("{s:>10} | {s:>12} | {s:>12} | {s:>12} | {s:>12}\n", .{ "Size", "Encrypt (µs)", "Decrypt (µs)", "Enc MB/s", "Dec MB/s" });
@@ -167,34 +153,29 @@ fn benchmarkHCTR3_128(allocator: std.mem.Allocator) !void {
         const plaintext = try allocator.alloc(u8, size);
         defer allocator.free(plaintext);
 
-        // Fill with test data
         for (message) |*b| {
             b.* = 0x42;
         }
 
-        // Warmup
         try cipher.encrypt(ciphertext, message, &tweak);
         try cipher.decrypt(plaintext, ciphertext, &tweak);
 
-        // Benchmark encryption
         const iterations: usize = if (size < 1024) 10000 else if (size < 65536) 1000 else 100;
 
-        const start_enc = timer.read();
+        const start_enc = readNs(io);
         for (0..iterations) |_| {
             try cipher.encrypt(ciphertext, message, &tweak);
         }
-        const enc_time = timer.read() - start_enc;
+        const enc_time = readNs(io) - start_enc;
         const enc_time_per_op = @as(f64, @floatFromInt(enc_time)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
 
-        // Benchmark decryption
-        const start_dec = timer.read();
+        const start_dec = readNs(io);
         for (0..iterations) |_| {
             try cipher.decrypt(plaintext, ciphertext, &tweak);
         }
-        const dec_time = timer.read() - start_dec;
+        const dec_time = readNs(io) - start_dec;
         const dec_time_per_op = @as(f64, @floatFromInt(dec_time)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
 
-        // Calculate throughput in MB/s
         const enc_mbps = (@as(f64, @floatFromInt(size)) / 1048576.0) / (enc_time_per_op / 1000000.0);
         const dec_mbps = (@as(f64, @floatFromInt(size)) / 1048576.0) / (dec_time_per_op / 1000000.0);
 
@@ -208,18 +189,15 @@ fn benchmarkHCTR3_128(allocator: std.mem.Allocator) !void {
     }
 }
 
-fn benchmarkHCTR3_256(allocator: std.mem.Allocator) !void {
+fn benchmarkHCTR3_256(allocator: std.mem.Allocator, io: Io) !void {
     print("\n=== HCTR3 AES-256 Benchmarks ===\n", .{});
 
     const key: [32]u8 = @splat(0x00);
     const tweak: [16]u8 = @splat(0x00);
 
-    var timer = try Timer.start();
-
-    // Benchmark initialization
-    const start_init = timer.read();
+    const start_init = readNs(io);
     var cipher = hctr3.Hctr3_256.init(key);
-    const init_time = timer.read() - start_init;
+    const init_time = readNs(io) - start_init;
     print("Initialization: {d:.3} µs\n\n", .{@as(f64, @floatFromInt(init_time)) / 1000.0});
 
     print("{s:>10} | {s:>12} | {s:>12} | {s:>12} | {s:>12}\n", .{ "Size", "Encrypt (µs)", "Decrypt (µs)", "Enc MB/s", "Dec MB/s" });
@@ -233,34 +211,29 @@ fn benchmarkHCTR3_256(allocator: std.mem.Allocator) !void {
         const plaintext = try allocator.alloc(u8, size);
         defer allocator.free(plaintext);
 
-        // Fill with test data
         for (message) |*b| {
             b.* = 0x42;
         }
 
-        // Warmup
         try cipher.encrypt(ciphertext, message, &tweak);
         try cipher.decrypt(plaintext, ciphertext, &tweak);
 
-        // Benchmark encryption
         const iterations: usize = if (size < 1024) 10000 else if (size < 65536) 1000 else 100;
 
-        const start_enc = timer.read();
+        const start_enc = readNs(io);
         for (0..iterations) |_| {
             try cipher.encrypt(ciphertext, message, &tweak);
         }
-        const enc_time = timer.read() - start_enc;
+        const enc_time = readNs(io) - start_enc;
         const enc_time_per_op = @as(f64, @floatFromInt(enc_time)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
 
-        // Benchmark decryption
-        const start_dec = timer.read();
+        const start_dec = readNs(io);
         for (0..iterations) |_| {
             try cipher.decrypt(plaintext, ciphertext, &tweak);
         }
-        const dec_time = timer.read() - start_dec;
+        const dec_time = readNs(io) - start_dec;
         const dec_time_per_op = @as(f64, @floatFromInt(dec_time)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
 
-        // Calculate throughput in MB/s
         const enc_mbps = (@as(f64, @floatFromInt(size)) / 1048576.0) / (enc_time_per_op / 1000000.0);
         const dec_mbps = (@as(f64, @floatFromInt(size)) / 1048576.0) / (dec_time_per_op / 1000000.0);
 
@@ -274,18 +247,15 @@ fn benchmarkHCTR3_256(allocator: std.mem.Allocator) !void {
     }
 }
 
-fn benchmarkHCTR2Fp_128_Decimal(allocator: std.mem.Allocator) !void {
+fn benchmarkHCTR2Fp_128_Decimal(allocator: std.mem.Allocator, io: Io) !void {
     print("\n=== HCTR2-FP AES-128 Decimal (radix=10) Benchmarks ===\n", .{});
 
     const key: [16]u8 = @splat(0x00);
     const tweak: [16]u8 = @splat(0x00);
 
-    var timer = try Timer.start();
-
-    // Benchmark initialization
-    const start_init = timer.read();
+    const start_init = readNs(io);
     var cipher = hctr2fp.Hctr2Fp_128_Decimal.init(key);
-    const init_time = timer.read() - start_init;
+    const init_time = readNs(io) - start_init;
     print("Initialization: {d:.3} µs\n", .{@as(f64, @floatFromInt(init_time)) / 1000.0});
     print("First block length: {} digits\n\n", .{hctr2fp.Hctr2Fp_128_Decimal.first_block_length});
 
@@ -293,7 +263,6 @@ fn benchmarkHCTR2Fp_128_Decimal(allocator: std.mem.Allocator) !void {
     print("{s:->10}-+-{s:->12}-+-{s:->12}-+-{s:->12}-+-{s:->12}\n", .{ "", "", "", "", "" });
 
     for (message_sizes, message_size_names) |size, name| {
-        // Skip sizes smaller than minimum message length
         if (size < hctr2fp.Hctr2Fp_128_Decimal.first_block_length) continue;
 
         const message = try allocator.alloc(u8, size);
@@ -303,40 +272,34 @@ fn benchmarkHCTR2Fp_128_Decimal(allocator: std.mem.Allocator) !void {
         const plaintext = try allocator.alloc(u8, size);
         defer allocator.free(plaintext);
 
-        // Fill first block with encoded value
         const value: u128 = 0x0123456789ABCDEF_FEDCBA9876543210;
         hctr2fp.encodeBaseRadix(value, 10, message[0..hctr2fp.Hctr2Fp_128_Decimal.first_block_length]);
 
-        // Fill tail with valid decimal digits
         if (size > hctr2fp.Hctr2Fp_128_Decimal.first_block_length) {
             for (message[hctr2fp.Hctr2Fp_128_Decimal.first_block_length..], 0..) |*b, i| {
                 b.* = @intCast(i % 10);
             }
         }
 
-        // Warmup
         try cipher.encrypt(ciphertext, message, &tweak);
         try cipher.decrypt(plaintext, ciphertext, &tweak);
 
-        // Benchmark encryption
         const iterations: usize = if (size < 1024) 10000 else if (size < 65536) 1000 else 100;
 
-        const start_enc = timer.read();
+        const start_enc = readNs(io);
         for (0..iterations) |_| {
             try cipher.encrypt(ciphertext, message, &tweak);
         }
-        const enc_time = timer.read() - start_enc;
+        const enc_time = readNs(io) - start_enc;
         const enc_time_per_op = @as(f64, @floatFromInt(enc_time)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
 
-        // Benchmark decryption
-        const start_dec = timer.read();
+        const start_dec = readNs(io);
         for (0..iterations) |_| {
             try cipher.decrypt(plaintext, ciphertext, &tweak);
         }
-        const dec_time = timer.read() - start_dec;
+        const dec_time = readNs(io) - start_dec;
         const dec_time_per_op = @as(f64, @floatFromInt(dec_time)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
 
-        // Calculate throughput in MB/s
         const enc_mbps = (@as(f64, @floatFromInt(size)) / 1048576.0) / (enc_time_per_op / 1000000.0);
         const dec_mbps = (@as(f64, @floatFromInt(size)) / 1048576.0) / (dec_time_per_op / 1000000.0);
 
@@ -350,18 +313,15 @@ fn benchmarkHCTR2Fp_128_Decimal(allocator: std.mem.Allocator) !void {
     }
 }
 
-fn benchmarkHCTR2Fp_128_Hex(allocator: std.mem.Allocator) !void {
+fn benchmarkHCTR2Fp_128_Hex(allocator: std.mem.Allocator, io: Io) !void {
     print("\n=== HCTR2-FP AES-128 Hexadecimal (radix=16) Benchmarks ===\n", .{});
 
     const key: [16]u8 = @splat(0x00);
     const tweak: [16]u8 = @splat(0x00);
 
-    var timer = try Timer.start();
-
-    // Benchmark initialization
-    const start_init = timer.read();
+    const start_init = readNs(io);
     var cipher = hctr2fp.Hctr2Fp_128_Hex.init(key);
-    const init_time = timer.read() - start_init;
+    const init_time = readNs(io) - start_init;
     print("Initialization: {d:.3} µs\n", .{@as(f64, @floatFromInt(init_time)) / 1000.0});
     print("First block length: {} digits\n\n", .{hctr2fp.Hctr2Fp_128_Hex.first_block_length});
 
@@ -369,7 +329,6 @@ fn benchmarkHCTR2Fp_128_Hex(allocator: std.mem.Allocator) !void {
     print("{s:->10}-+-{s:->12}-+-{s:->12}-+-{s:->12}-+-{s:->12}\n", .{ "", "", "", "", "" });
 
     for (message_sizes, message_size_names) |size, name| {
-        // Skip sizes smaller than minimum message length
         if (size < hctr2fp.Hctr2Fp_128_Hex.first_block_length) continue;
 
         const message = try allocator.alloc(u8, size);
@@ -379,40 +338,34 @@ fn benchmarkHCTR2Fp_128_Hex(allocator: std.mem.Allocator) !void {
         const plaintext = try allocator.alloc(u8, size);
         defer allocator.free(plaintext);
 
-        // Fill first block with encoded value
         const value: u128 = 0xFEDCBA9876543210_0123456789ABCDEF;
         hctr2fp.encodeBaseRadix(value, 16, message[0..hctr2fp.Hctr2Fp_128_Hex.first_block_length]);
 
-        // Fill tail with valid hex digits
         if (size > hctr2fp.Hctr2Fp_128_Hex.first_block_length) {
             for (message[hctr2fp.Hctr2Fp_128_Hex.first_block_length..], 0..) |*b, i| {
                 b.* = @intCast(i % 16);
             }
         }
 
-        // Warmup
         try cipher.encrypt(ciphertext, message, &tweak);
         try cipher.decrypt(plaintext, ciphertext, &tweak);
 
-        // Benchmark encryption
         const iterations: usize = if (size < 1024) 10000 else if (size < 65536) 1000 else 100;
 
-        const start_enc = timer.read();
+        const start_enc = readNs(io);
         for (0..iterations) |_| {
             try cipher.encrypt(ciphertext, message, &tweak);
         }
-        const enc_time = timer.read() - start_enc;
+        const enc_time = readNs(io) - start_enc;
         const enc_time_per_op = @as(f64, @floatFromInt(enc_time)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
 
-        // Benchmark decryption
-        const start_dec = timer.read();
+        const start_dec = readNs(io);
         for (0..iterations) |_| {
             try cipher.decrypt(plaintext, ciphertext, &tweak);
         }
-        const dec_time = timer.read() - start_dec;
+        const dec_time = readNs(io) - start_dec;
         const dec_time_per_op = @as(f64, @floatFromInt(dec_time)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
 
-        // Calculate throughput in MB/s
         const enc_mbps = (@as(f64, @floatFromInt(size)) / 1048576.0) / (enc_time_per_op / 1000000.0);
         const dec_mbps = (@as(f64, @floatFromInt(size)) / 1048576.0) / (dec_time_per_op / 1000000.0);
 
@@ -426,18 +379,15 @@ fn benchmarkHCTR2Fp_128_Hex(allocator: std.mem.Allocator) !void {
     }
 }
 
-fn benchmarkHCTR2Fp_128_Base64(allocator: std.mem.Allocator) !void {
+fn benchmarkHCTR2Fp_128_Base64(allocator: std.mem.Allocator, io: Io) !void {
     print("\n=== HCTR2-FP AES-128 Base64 (radix=64) Benchmarks ===\n", .{});
 
     const key: [16]u8 = @splat(0x00);
     const tweak: [16]u8 = @splat(0x00);
 
-    var timer = try Timer.start();
-
-    // Benchmark initialization
-    const start_init = timer.read();
+    const start_init = readNs(io);
     var cipher = hctr2fp.Hctr2Fp_128_Base64.init(key);
-    const init_time = timer.read() - start_init;
+    const init_time = readNs(io) - start_init;
     print("Initialization: {d:.3} µs\n", .{@as(f64, @floatFromInt(init_time)) / 1000.0});
     print("First block length: {} digits\n\n", .{hctr2fp.Hctr2Fp_128_Base64.first_block_length});
 
@@ -445,7 +395,6 @@ fn benchmarkHCTR2Fp_128_Base64(allocator: std.mem.Allocator) !void {
     print("{s:->10}-+-{s:->12}-+-{s:->12}-+-{s:->12}-+-{s:->12}\n", .{ "", "", "", "", "" });
 
     for (message_sizes, message_size_names) |size, name| {
-        // Skip sizes smaller than minimum message length
         if (size < hctr2fp.Hctr2Fp_128_Base64.first_block_length) continue;
 
         const message = try allocator.alloc(u8, size);
@@ -455,40 +404,34 @@ fn benchmarkHCTR2Fp_128_Base64(allocator: std.mem.Allocator) !void {
         const plaintext = try allocator.alloc(u8, size);
         defer allocator.free(plaintext);
 
-        // Fill first block with encoded value
         const value: u128 = 0xABCDEF0123456789_FEDCBA9876543210;
         hctr2fp.encodeBaseRadix(value, 64, message[0..hctr2fp.Hctr2Fp_128_Base64.first_block_length]);
 
-        // Fill tail with valid base64 digits
         if (size > hctr2fp.Hctr2Fp_128_Base64.first_block_length) {
             for (message[hctr2fp.Hctr2Fp_128_Base64.first_block_length..], 0..) |*b, i| {
                 b.* = @intCast(i % 64);
             }
         }
 
-        // Warmup
         try cipher.encrypt(ciphertext, message, &tweak);
         try cipher.decrypt(plaintext, ciphertext, &tweak);
 
-        // Benchmark encryption
         const iterations: usize = if (size < 1024) 10000 else if (size < 65536) 1000 else 100;
 
-        const start_enc = timer.read();
+        const start_enc = readNs(io);
         for (0..iterations) |_| {
             try cipher.encrypt(ciphertext, message, &tweak);
         }
-        const enc_time = timer.read() - start_enc;
+        const enc_time = readNs(io) - start_enc;
         const enc_time_per_op = @as(f64, @floatFromInt(enc_time)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
 
-        // Benchmark decryption
-        const start_dec = timer.read();
+        const start_dec = readNs(io);
         for (0..iterations) |_| {
             try cipher.decrypt(plaintext, ciphertext, &tweak);
         }
-        const dec_time = timer.read() - start_dec;
+        const dec_time = readNs(io) - start_dec;
         const dec_time_per_op = @as(f64, @floatFromInt(dec_time)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
 
-        // Calculate throughput in MB/s
         const enc_mbps = (@as(f64, @floatFromInt(size)) / 1048576.0) / (enc_time_per_op / 1000000.0);
         const dec_mbps = (@as(f64, @floatFromInt(size)) / 1048576.0) / (dec_time_per_op / 1000000.0);
 
@@ -502,18 +445,15 @@ fn benchmarkHCTR2Fp_128_Base64(allocator: std.mem.Allocator) !void {
     }
 }
 
-fn benchmarkHCTR3Fp_128_Decimal(allocator: std.mem.Allocator) !void {
+fn benchmarkHCTR3Fp_128_Decimal(allocator: std.mem.Allocator, io: Io) !void {
     print("\n=== HCTR3-FP AES-128 Decimal (radix=10) Benchmarks ===\n", .{});
 
     const key: [16]u8 = @splat(0x00);
     const tweak: [16]u8 = @splat(0x00);
 
-    var timer = try Timer.start();
-
-    // Benchmark initialization
-    const start_init = timer.read();
+    const start_init = readNs(io);
     var cipher = hctr3fp.Hctr3Fp_128_Decimal.init(key);
-    const init_time = timer.read() - start_init;
+    const init_time = readNs(io) - start_init;
     print("Initialization: {d:.3} µs\n", .{@as(f64, @floatFromInt(init_time)) / 1000.0});
     print("First block length: {} digits\n\n", .{hctr3fp.Hctr3Fp_128_Decimal.first_block_length});
 
@@ -521,7 +461,6 @@ fn benchmarkHCTR3Fp_128_Decimal(allocator: std.mem.Allocator) !void {
     print("{s:->10}-+-{s:->12}-+-{s:->12}-+-{s:->12}-+-{s:->12}\n", .{ "", "", "", "", "" });
 
     for (message_sizes, message_size_names) |size, name| {
-        // Skip sizes smaller than minimum message length
         if (size < hctr3fp.Hctr3Fp_128_Decimal.first_block_length) continue;
 
         const message = try allocator.alloc(u8, size);
@@ -531,40 +470,34 @@ fn benchmarkHCTR3Fp_128_Decimal(allocator: std.mem.Allocator) !void {
         const plaintext = try allocator.alloc(u8, size);
         defer allocator.free(plaintext);
 
-        // Fill first block with encoded value
         const value: u128 = 0x0123456789ABCDEF_FEDCBA9876543210;
         hctr3fp.encodeBaseRadix(value, 10, message[0..hctr3fp.Hctr3Fp_128_Decimal.first_block_length]);
 
-        // Fill tail with valid decimal digits
         if (size > hctr3fp.Hctr3Fp_128_Decimal.first_block_length) {
             for (message[hctr3fp.Hctr3Fp_128_Decimal.first_block_length..], 0..) |*b, i| {
                 b.* = @intCast(i % 10);
             }
         }
 
-        // Warmup
         try cipher.encrypt(ciphertext, message, &tweak);
         try cipher.decrypt(plaintext, ciphertext, &tweak);
 
-        // Benchmark encryption
         const iterations: usize = if (size < 1024) 10000 else if (size < 65536) 1000 else 100;
 
-        const start_enc = timer.read();
+        const start_enc = readNs(io);
         for (0..iterations) |_| {
             try cipher.encrypt(ciphertext, message, &tweak);
         }
-        const enc_time = timer.read() - start_enc;
+        const enc_time = readNs(io) - start_enc;
         const enc_time_per_op = @as(f64, @floatFromInt(enc_time)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
 
-        // Benchmark decryption
-        const start_dec = timer.read();
+        const start_dec = readNs(io);
         for (0..iterations) |_| {
             try cipher.decrypt(plaintext, ciphertext, &tweak);
         }
-        const dec_time = timer.read() - start_dec;
+        const dec_time = readNs(io) - start_dec;
         const dec_time_per_op = @as(f64, @floatFromInt(dec_time)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
 
-        // Calculate throughput in MB/s
         const enc_mbps = (@as(f64, @floatFromInt(size)) / 1048576.0) / (enc_time_per_op / 1000000.0);
         const dec_mbps = (@as(f64, @floatFromInt(size)) / 1048576.0) / (dec_time_per_op / 1000000.0);
 
@@ -578,18 +511,15 @@ fn benchmarkHCTR3Fp_128_Decimal(allocator: std.mem.Allocator) !void {
     }
 }
 
-fn benchmarkHCTR3Fp_128_Hex(allocator: std.mem.Allocator) !void {
+fn benchmarkHCTR3Fp_128_Hex(allocator: std.mem.Allocator, io: Io) !void {
     print("\n=== HCTR3-FP AES-128 Hexadecimal (radix=16) Benchmarks ===\n", .{});
 
     const key: [16]u8 = @splat(0x00);
     const tweak: [16]u8 = @splat(0x00);
 
-    var timer = try Timer.start();
-
-    // Benchmark initialization
-    const start_init = timer.read();
+    const start_init = readNs(io);
     var cipher = hctr3fp.Hctr3Fp_128_Hex.init(key);
-    const init_time = timer.read() - start_init;
+    const init_time = readNs(io) - start_init;
     print("Initialization: {d:.3} µs\n", .{@as(f64, @floatFromInt(init_time)) / 1000.0});
     print("First block length: {} digits\n\n", .{hctr3fp.Hctr3Fp_128_Hex.first_block_length});
 
@@ -606,40 +536,34 @@ fn benchmarkHCTR3Fp_128_Hex(allocator: std.mem.Allocator) !void {
         const plaintext = try allocator.alloc(u8, size);
         defer allocator.free(plaintext);
 
-        // Fill first block with encoded value
         const value: u128 = 0x0123456789ABCDEF_FEDCBA9876543210;
         hctr3fp.encodeBaseRadix(value, 16, message[0..hctr3fp.Hctr3Fp_128_Hex.first_block_length]);
 
-        // Fill tail with valid hex digits
         if (size > hctr3fp.Hctr3Fp_128_Hex.first_block_length) {
             for (message[hctr3fp.Hctr3Fp_128_Hex.first_block_length..], 0..) |*b, i| {
                 b.* = @intCast(i % 16);
             }
         }
 
-        // Warmup
         try cipher.encrypt(ciphertext, message, &tweak);
         try cipher.decrypt(plaintext, ciphertext, &tweak);
 
-        // Benchmark encryption
         const iterations: usize = if (size < 1024) 10000 else if (size < 65536) 1000 else 100;
 
-        const start_enc = timer.read();
+        const start_enc = readNs(io);
         for (0..iterations) |_| {
             try cipher.encrypt(ciphertext, message, &tweak);
         }
-        const enc_time = timer.read() - start_enc;
+        const enc_time = readNs(io) - start_enc;
         const enc_time_per_op = @as(f64, @floatFromInt(enc_time)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
 
-        // Benchmark decryption
-        const start_dec = timer.read();
+        const start_dec = readNs(io);
         for (0..iterations) |_| {
             try cipher.decrypt(plaintext, ciphertext, &tweak);
         }
-        const dec_time = timer.read() - start_dec;
+        const dec_time = readNs(io) - start_dec;
         const dec_time_per_op = @as(f64, @floatFromInt(dec_time)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
 
-        // Calculate throughput in MB/s
         const enc_mbps = (@as(f64, @floatFromInt(size)) / 1048576.0) / (enc_time_per_op / 1000000.0);
         const dec_mbps = (@as(f64, @floatFromInt(size)) / 1048576.0) / (dec_time_per_op / 1000000.0);
 
@@ -653,18 +577,15 @@ fn benchmarkHCTR3Fp_128_Hex(allocator: std.mem.Allocator) !void {
     }
 }
 
-fn benchmarkHCTR3Fp_128_Base64(allocator: std.mem.Allocator) !void {
+fn benchmarkHCTR3Fp_128_Base64(allocator: std.mem.Allocator, io: Io) !void {
     print("\n=== HCTR3-FP AES-128 Base64 (radix=64) Benchmarks ===\n", .{});
 
     const key: [16]u8 = @splat(0x00);
     const tweak: [16]u8 = @splat(0x00);
 
-    var timer = try Timer.start();
-
-    // Benchmark initialization
-    const start_init = timer.read();
+    const start_init = readNs(io);
     var cipher = hctr3fp.Hctr3Fp_128_Base64.init(key);
-    const init_time = timer.read() - start_init;
+    const init_time = readNs(io) - start_init;
     print("Initialization: {d:.3} µs\n", .{@as(f64, @floatFromInt(init_time)) / 1000.0});
     print("First block length: {} digits\n\n", .{hctr3fp.Hctr3Fp_128_Base64.first_block_length});
 
@@ -681,40 +602,34 @@ fn benchmarkHCTR3Fp_128_Base64(allocator: std.mem.Allocator) !void {
         const plaintext = try allocator.alloc(u8, size);
         defer allocator.free(plaintext);
 
-        // Fill first block with encoded value
         const value: u128 = 0x0123456789ABCDEF_FEDCBA9876543210;
         hctr3fp.encodeBaseRadix(value, 64, message[0..hctr3fp.Hctr3Fp_128_Base64.first_block_length]);
 
-        // Fill tail with valid base64 digits
         if (size > hctr3fp.Hctr3Fp_128_Base64.first_block_length) {
             for (message[hctr3fp.Hctr3Fp_128_Base64.first_block_length..], 0..) |*b, i| {
                 b.* = @intCast(i % 64);
             }
         }
 
-        // Warmup
         try cipher.encrypt(ciphertext, message, &tweak);
         try cipher.decrypt(plaintext, ciphertext, &tweak);
 
-        // Benchmark encryption
         const iterations: usize = if (size < 1024) 10000 else if (size < 65536) 1000 else 100;
 
-        const start_enc = timer.read();
+        const start_enc = readNs(io);
         for (0..iterations) |_| {
             try cipher.encrypt(ciphertext, message, &tweak);
         }
-        const enc_time = timer.read() - start_enc;
+        const enc_time = readNs(io) - start_enc;
         const enc_time_per_op = @as(f64, @floatFromInt(enc_time)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
 
-        // Benchmark decryption
-        const start_dec = timer.read();
+        const start_dec = readNs(io);
         for (0..iterations) |_| {
             try cipher.decrypt(plaintext, ciphertext, &tweak);
         }
-        const dec_time = timer.read() - start_dec;
+        const dec_time = readNs(io) - start_dec;
         const dec_time_per_op = @as(f64, @floatFromInt(dec_time)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
 
-        // Calculate throughput in MB/s
         const enc_mbps = (@as(f64, @floatFromInt(size)) / 1048576.0) / (enc_time_per_op / 1000000.0);
         const dec_mbps = (@as(f64, @floatFromInt(size)) / 1048576.0) / (dec_time_per_op / 1000000.0);
 
@@ -728,24 +643,23 @@ fn benchmarkHCTR3Fp_128_Base64(allocator: std.mem.Allocator) !void {
     }
 }
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = std.heap.smp_allocator;
+    const io = init.io;
 
     print("HCTR2/HCTR3 Cryptographic Mode Benchmarks\n", .{});
     print("==========================================\n", .{});
 
-    try benchmarkHCTR2_128(allocator);
-    try benchmarkHCTR2_256(allocator);
-    try benchmarkHCTR3_128(allocator);
-    try benchmarkHCTR3_256(allocator);
-    try benchmarkHCTR2Fp_128_Decimal(allocator);
-    try benchmarkHCTR2Fp_128_Hex(allocator);
-    try benchmarkHCTR2Fp_128_Base64(allocator);
-    try benchmarkHCTR3Fp_128_Decimal(allocator);
-    try benchmarkHCTR3Fp_128_Hex(allocator);
-    try benchmarkHCTR3Fp_128_Base64(allocator);
+    try benchmarkHCTR2_128(allocator, io);
+    try benchmarkHCTR2_256(allocator, io);
+    try benchmarkHCTR3_128(allocator, io);
+    try benchmarkHCTR3_256(allocator, io);
+    try benchmarkHCTR2Fp_128_Decimal(allocator, io);
+    try benchmarkHCTR2Fp_128_Hex(allocator, io);
+    try benchmarkHCTR2Fp_128_Base64(allocator, io);
+    try benchmarkHCTR3Fp_128_Decimal(allocator, io);
+    try benchmarkHCTR3Fp_128_Hex(allocator, io);
+    try benchmarkHCTR3Fp_128_Base64(allocator, io);
 
     print("\n", .{});
 }
