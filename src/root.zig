@@ -19,6 +19,12 @@ pub const Hctr2TwKD_256 = hctr2_twkd.Hctr2TwKD_256;
 pub const Hctr2TwKD = hctr2_twkd.Hctr2TwKD;
 pub const CencKdf = hctr2_twkd.CencKdf;
 
+// Export HCTR2++ (R3 fresh re-keying - Beyond-Birthday-Bound secure)
+const hctr2pp = @import("hctr2pp.zig");
+pub const Hctr2pp_128 = hctr2pp.Hctr2pp_128;
+pub const Hctr2pp_256 = hctr2pp.Hctr2pp_256;
+pub const Hctr2pp = hctr2pp.Hctr2pp;
+
 // Export HCTR3
 const hctr3 = @import("hctr3.zig");
 pub const Hctr3_128 = hctr3.Hctr3_128;

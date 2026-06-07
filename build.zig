@@ -62,6 +62,19 @@ pub fn build(b: *std.Build) void {
     const run_hctr2_tests = b.addRunArtifact(hctr2_tests);
     test_step.dependOn(&run_hctr2_tests.step);
 
+    // HCTR2++ tests
+    const hctr2pp_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/hctr2pp.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const hctr2pp_tests = b.addTest(.{
+        .name = "hctr2pp_test",
+        .root_module = hctr2pp_test_mod,
+    });
+    const run_hctr2pp_tests = b.addRunArtifact(hctr2pp_tests);
+    test_step.dependOn(&run_hctr2pp_tests.step);
+
     // LFSR tests
     const lfsr_test_mod = b.createModule(.{
         .root_source_file = b.path("src/lfsr_test.zig"),

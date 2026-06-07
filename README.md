@@ -1,8 +1,8 @@
 # zig-hctr2
 
-Pure Zig implementation of HCTR2, HCTR3, and their beyond-birthday-bound secure variants (CHCTR2, HCTR2-TwKD), plus format-preserving variants.
+Pure Zig implementation of HCTR2, HCTR3, and their beyond-birthday-bound secure variants (CHCTR2, HCTR2-TwKD, HCTR2++), plus format-preserving variants.
 
-HCTR2 and HCTR3 are length-preserving tweakable wide-block encryption modes. CHCTR2 and HCTR2-TwKD are beyond-birthday-bound (BBB) secure variants that achieve approximately 85-bit security instead of HCTR2's 64-bit birthday-bound security. The format-preserving variants (HCTR2-FP and HCTR3-FP) are also length-preserving and additionally preserve character sets (e.g., decimal digits remain decimal).
+HCTR2 and HCTR3 are length-preserving tweakable wide-block encryption modes. CHCTR2, HCTR2-TwKD and HCTR2++ are beyond-birthday-bound (BBB) secure variants: CHCTR2 and HCTR2-TwKD achieve approximately 85-bit security instead of HCTR2's 64-bit birthday-bound security, while HCTR2++ approaches full 128-bit security when tweaks are unique. The format-preserving variants (HCTR2-FP and HCTR3-FP) are also length-preserving and additionally preserve character sets (e.g., decimal digits remain decimal).
 
 These modes are designed for full-disk encryption, filename encryption, and other applications where nonces and authentication tags would be impractical.
 
@@ -67,6 +67,18 @@ Use HCTR2-TwKD when you need:
 HCTR2-TwKD derives a fresh HCTR2 key from the first 126 bits of the tweak (T0) using the CENC construction, and passes the remaining tweak bytes (T*) to HCTR2. It achieves 2n/3-bit security when the number of encryptions per T0 is bounded by approximately 2^42. Cost per block is identical to HCTR2 (1 BC call + 2 field multiplications), with a small per-tweak overhead for key derivation.
 
 Reference: "Beyond-Birthday-Bound Security with HCTR2" (ASIACRYPT 2025)
+
+### HCTR2++ (Fresh Re-keying)
+
+Use HCTR2++ when you need:
+
+- The highest security level of the HCTR2 family, approaching O(2^128) with unique tweaks
+- Graceful security degradation when tweaks are reused
+- A construction built from a plain block cipher, at the price of speed
+
+HCTR2++ keeps the Hash-Encrypt-Hash structure of HCTR2 but replaces every static block cipher call with Mennink's R3 fresh re-keying scheme and widens the universal hash function from 128 to 256 bits (POLYVAL-style polynomial evaluation over GF(2^256)). Every message block costs one AES key schedule, one AES call and two GF(2^256) multiplications, which makes it noticeably slower than HCTR2. The re-keyed block cipher calls are always AES-128, so the AES-256 variant only changes how subkeys are derived and still provides 128-bit effective strength.
+
+Reference: "HCTR++: A Beyond Birthday Bound Secure HCTR2 Variant" (Ozturk, Kocak, Yayla)
 
 ### Format-Preserving Variants (HCTR2-FP and HCTR3-FP)
 
@@ -259,6 +271,27 @@ pub fn main() !void {
 }
 ```
 
+### HCTR2++ Encryption (Fresh Re-keying)
+
+```zig
+const hctr2 = @import("hctr2");
+
+pub fn main() !void {
+    const key: [16]u8 = @splat(0x00);
+    var cipher = hctr2.Hctr2pp_128.init(key);
+
+    const plaintext = "BBB-secure data!";
+    // Unique tweaks give security approaching 2^128; reuse degrades it gracefully
+    const tweak = "unique-tweak-value";
+    var ciphertext: [plaintext.len]u8 = undefined;
+
+    try cipher.encrypt(&ciphertext, plaintext, tweak);
+
+    var decrypted: [plaintext.len]u8 = undefined;
+    try cipher.decrypt(&decrypted, &ciphertext, tweak);
+}
+```
+
 ### Format-Preserving Encryption (Decimal)
 
 ```zig
@@ -307,7 +340,7 @@ HCTR2 and HCTR3 provide confidentiality only, not authenticity. They do not dete
 
 ### Minimum message lengths
 
-- HCTR2/HCTR3: 16 bytes minimum
+- HCTR2/HCTR3 and the BBB variants (CHCTR2, HCTR2-TwKD, HCTR2++): 16 bytes minimum
 - HCTR2-FP/HCTR3-FP: depends on radix (e.g., 39 digits for radix-10, 32 digits for radix-16, 22 digits for radix-64)
 
 Messages shorter than the minimum will return `error.InputTooShort`.
@@ -343,3 +376,4 @@ Run `zig build bench -Doptimize=ReleaseFast` to measure performance on your hard
 - [Length-preserving encryption with HCTR2](https://eprint.iacr.org/2021/1441) - Paul Crowley, Nathan Huckleberry, Eric Biggers (IACR ePrint Archive)
 - [HCTR3](https://csrc.nist.gov/files/pubs/sp/800/197/iprd/docs/3_samvadini.pdf) - NIST SP 800-197 Workshop presentation
 - [Beyond-Birthday-Bound Security with HCTR2](https://doi.org/10.1007/978-3-031-85848-6_1) - Chen, Y.L., et al. (ASIACRYPT 2025, LNCS 16245, pp. 3-34)
+- HCTR++: A Beyond Birthday Bound Secure HCTR2 Variant - Kamil Ozturk, Onur Kocak, Oguz Yayla
