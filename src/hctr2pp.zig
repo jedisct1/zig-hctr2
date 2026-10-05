@@ -4,38 +4,40 @@ const aes = crypto.core.aes;
 const mem = std.mem;
 const assert = std.debug.assert;
 
-/// HCTR2++ with an AES-128 master key.
+/// HCTR2++ using an AES-128 master key.
 pub const Hctr2pp_128 = Hctr2pp(aes.Aes128);
 
-/// HCTR2++ with an AES-256 master key.
+/// HCTR2++ using an AES-256 master key.
 ///
-/// AES-256 is used only to derive the hash and re-keying subkeys from the
-/// master key. The R3 re-keyed block cipher calls are always AES-128, because
-/// the R3 scheme produces n-bit ephemeral keys, so this variant does NOT
-/// provide 256-bit security: the effective primitive strength is 128 bits,
-/// exactly as with Hctr2pp_128. Choose it only when key management mandates a
-/// 256-bit master key.
+/// AES-256 derives the hash and re-keying subkeys only.
+/// R3 uses 128-bit ephemeral keys, so its block-cipher calls always use
+/// AES-128.
+/// Both variants therefore provide 128-bit effective security.
+/// Use this variant only when a 256-bit master key is required.
 pub const Hctr2pp_256 = Hctr2pp(aes.Aes256);
 
-/// Hash block length in bytes (2n bits with n = 128).
+/// Bytes in each 2n-bit hash block, where n is 128.
 pub const hash_block_length = 32;
 
 const Elem = [4]u64;
 
-/// Carryless 64x64 -> 128 bit multiplication.
+/// Carryless multiplication of two 64-bit values.
 ///
-/// Uses the masked-multiplication technique (as in BearSSL's ghash_ctmul64) so
-/// the running time does not depend on the operand values.
+/// This uses the masked multiplication method from BearSSL's `ghash_ctmul64`,
+/// so its running time does not depend on the operands.
+/// Handling the low four bits separately prevents ordinary multiplication
+/// carries from corrupting the carryless product.
 fn bmul64(x: u64, y: u64) u128 {
     const m0: u128 = 0x11111111111111111111111111111111;
     const m1 = m0 << 1;
     const m2 = m0 << 2;
     const m3 = m0 << 3;
 
-    const x0 = @as(u128, x) & m0;
-    const x1 = @as(u128, x) & m1;
-    const x2 = @as(u128, x) & m2;
-    const x3 = @as(u128, x) & m3;
+    const xh = @as(u128, x & ~@as(u64, 0xf));
+    const x0 = xh & m0;
+    const x1 = xh & m1;
+    const x2 = xh & m2;
+    const x3 = xh & m3;
     const y0 = @as(u128, y) & m0;
     const y1 = @as(u128, y) & m1;
     const y2 = @as(u128, y) & m2;
@@ -46,12 +48,18 @@ fn bmul64(x: u64, y: u64) u128 {
     const z2 = (x0 *% y2) ^ (x1 *% y1) ^ (x2 *% y0) ^ (x3 *% y3);
     const z3 = (x0 *% y3) ^ (x1 *% y2) ^ (x2 *% y1) ^ (x3 *% y0);
 
-    return (z0 & m0) | (z1 & m1) | (z2 & m2) | (z3 & m3);
+    var low: u128 = 0;
+    inline for (0..4) |k| {
+        const mask = @as(u64, 0) -% ((x >> k) & 1);
+        low ^= @as(u128, mask & y) << k;
+    }
+
+    return ((z0 & m0) | (z1 & m1) | (z2 & m2) | (z3 & m3)) ^ low;
 }
 
-/// Multiplication in GF(2^256) defined by x^256 + x^10 + x^5 + x^2 + 1.
+/// Multiplies in GF(2^256) using x^256 + x^10 + x^5 + x^2 + 1.
 ///
-/// Elements are little-endian: bit i of limb j is the coefficient of x^(64j + i).
+/// Elements are little-endian: bit i of limb j represents x^(64j + i).
 fn gfMul(a: Elem, b: Elem) Elem {
     var t: [8]u64 = @splat(0);
     for (0..4) |i| {
@@ -62,7 +70,7 @@ fn gfMul(a: Elem, b: Elem) Elem {
         }
     }
 
-    // Fold the upper 256 bits using x^256 = x^10 + x^5 + x^2 + 1.
+    // Reduce the upper half with the field polynomial.
     const hi = t[4..8].*;
     var res: Elem = t[0..4].*;
     var overflow: u64 = 0;
@@ -77,7 +85,7 @@ fn gfMul(a: Elem, b: Elem) Elem {
         }
         overflow ^= hi[3] >> (64 - s);
     }
-    // overflow < 2^10, so the second fold stays within the first limb.
+    // The remaining terms fit entirely in the first limb.
     res[0] ^= overflow ^ (overflow << 2) ^ (overflow << 5) ^ (overflow << 10);
     return res;
 }
@@ -106,13 +114,12 @@ fn hashUpdate(acc: *Elem, key: Elem, block: *const [hash_block_length]u8) void {
     acc.* = gfMul(elemXor(acc.*, elemFromBytes(block)), key);
 }
 
-/// 2n-bit POLYVAL-style universal hash over GF(2^256).
+/// A 2n-bit POLYVAL-style universal hash over GF(2^256).
 ///
-/// Computes sum X_i * h^(l-i+1) by Horner evaluation, with the HCTR2 input
-/// encoding: a length block, the zero-padded tweak, and the message padded
-/// with 1 || 0*.
+/// The HCTR2 encoding hashes a length block, the zero-padded tweak, and the
+/// message padded with one bit followed by zeros.
 fn hash2n(key: Elem, tweak: []const u8, msg: []const u8) [hash_block_length]u8 {
-    const tweak_len_bits = tweak.len * 8;
+    const tweak_len_bits = @as(u128, tweak.len) * 8;
     const len_code: u128 = if (msg.len % hash_block_length == 0)
         2 * tweak_len_bits + 2
     else
@@ -147,51 +154,31 @@ fn hash2n(key: Elem, tweak: []const u8, msg: []const u8) [hash_block_length]u8 {
     return elemToBytes(acc);
 }
 
-/// HCTR2++ (HCTR++) is a beyond-birthday-bound secure variant of HCTR2.
+/// HCTR2++ (HCTR++) is a beyond-birthday-bound variant of HCTR2.
 ///
-/// HCTR2++ is the construction from "HCTR++: A Beyond Birthday Bound Secure
-/// HCTR2 Variant" by Ozturk, Kocak and Yayla. It keeps the Hash-Encrypt-Hash
-/// structure of HCTR2 but replaces every static block cipher call with
-/// Mennink's R3 fresh re-keying scheme and widens the universal hash function
-/// from n bits to 2n bits. The result is O(2^n) SPRP security with unique
-/// tweaks, degrading gracefully with tweak reuse, while still being built from
-/// a plain block cipher (AES).
+/// It combines HCTR2's hash-encrypt-hash structure with R3 fresh re-keying
+/// and a 2n-bit universal hash.
+/// With unique tweaks, it provides strong pseudorandom permutation security
+/// up to roughly 2^n operations.
+/// Reusing a tweak reduces that bound.
 ///
-/// Construction (Figure 4 of the paper):
-/// - Subkeys h1, h2 (2n-bit hash keys) and K (2n-bit re-keying key) are
-///   derived from the master key as E_K(bin(1))||E_K(bin(2)),
-///   E_K(bin(3))||E_K(bin(4)) and E_K(bin(5))||E_K(bin(6))
-/// - The first block is masked with the top half of a 2n-bit hash of the bulk
-///   and the tweak, then encrypted under an R3-derived ephemeral key; the
-///   bottom half of the hash seeds the re-keying nonce
-/// - The internal state r||J is the 2n-bit hash of CC and the tweak under
-///   h1 XOR h2
-/// - CTR++ generates the keystream with a fresh R3-derived key per block
-/// - The first output block goes through an inverse block cipher call so that
-///   the ciphertext depends on the complete hash digest, and encryption and
-///   decryption share the same code path with h1 and h2 swapped
+/// The construction derives two hash keys and an R3 re-keying key from the
+/// master key.
+/// It hashes the tweak and message around the first block, while CTR++ creates
+/// each bulk keystream block under a fresh R3-derived key.
 ///
-/// The 2n-bit hash is instantiated as a POLYVAL-style polynomial evaluation
-/// over GF(2^256). Blocks are 32 bytes interpreted as little-endian
-/// polynomials, and the field is defined by the irreducible pentanomial
-/// x^256 + x^10 + x^5 + x^2 + 1. The input encoding mirrors the HCTR2 hash:
-/// a length block encoding 2*|T| + 2 (or + 3 when the message is not
-/// block-aligned), the zero-padded tweak, then the message padded with a
-/// single 1 bit and zeros.
+/// Hash blocks are 32-byte little-endian polynomials in GF(2^256), defined by
+/// x^256 + x^10 + x^5 + x^2 + 1.
 ///
-/// Security properties:
-/// - Beyond-birthday-bound SPRP security, approaching O(2^n) with unique tweaks
-/// - Security degrades with the number of queries sharing the same tweak
-/// - Ciphertext length equals plaintext length (no expansion)
-/// - No authentication - consider AEAD if integrity protection is needed
-/// - Minimum message length: 16 bytes (one AES block)
+/// Ciphertexts have the same length as plaintexts, but HCTR2++ does not
+/// authenticate them.
+/// Use an AEAD mode when integrity is required.
+/// Messages must be at least one AES block (16 bytes).
 ///
-/// The re-keying makes this mode noticeably slower than HCTR2: every message
-/// block costs one AES key schedule, one AES call and two GF(2^256)
-/// multiplications.
+/// R3 re-keying costs an AES key schedule, an AES call, and two field
+/// multiplications per message block, so this mode is slower than HCTR2.
 ///
-/// Type parameters:
-/// - `Aes`: AES variant for subkey derivation (Aes128 or Aes256)
+/// `Aes` selects AES-128 or AES-256 for subkey derivation.
 pub fn Hctr2pp(comptime Aes: anytype) type {
     const aes_block_length = Aes.block.block_length;
 
@@ -204,29 +191,23 @@ pub fn Hctr2pp(comptime Aes: anytype) type {
         kk: Elem,
         r3_init: Elem,
 
-        /// Authentication tag length (0 - HCTR2++ is unauthenticated).
+        /// HCTR2++ does not produce authentication tags.
         pub const tag_length = 0;
 
-        /// Nonce length (0 - HCTR2++ uses tweaks instead).
+        /// HCTR2++ uses tweaks rather than fixed-size nonces.
         pub const nonce_length = 0;
 
-        /// Master key length in bytes (16 for AES-128, 32 for AES-256).
+        /// Bytes in the master key: 16 for AES-128 or 32 for AES-256.
         pub const key_length = Aes.key_bits / 8;
 
-        /// AES block length in bytes (always 16).
+        /// Bytes in an AES block.
         pub const block_length = aes_block_length;
 
-        /// Initialize HCTR2++ cipher state from a master key.
+        /// Creates cipher state from a master key.
         ///
-        /// The master cipher is only used to derive the hash and re-keying
-        /// subkeys. The re-keyed block cipher calls always use AES-128, since
-        /// the R3 scheme produces n-bit ephemeral keys; the effective key
-        /// strength is therefore 128 bits regardless of the master key size.
-        ///
-        /// Parameters:
-        /// - `key`: Master key (16 bytes for AES-128, 32 bytes for AES-256)
-        ///
-        /// Returns: Initialized cipher state ready for encryption/decryption operations.
+        /// The master cipher derives the hash and re-keying subkeys only.
+        /// R3 uses AES-128 ephemeral keys, so both variants have 128-bit
+        /// effective security.
         pub fn init(key: [key_length]u8) State {
             const ks = Aes.initEnc(key);
             var blocks: [6 * aes_block_length]u8 = @splat(0);
@@ -244,49 +225,40 @@ pub fn Hctr2pp(comptime Aes: anytype) type {
                 .h2 = h2,
                 .h12 = elemXor(h1, h2),
                 .kk = kk,
-                // Constant first hash2n step of every r3 call: the length
-                // block for an empty tweak and a 16-byte message encodes 3.
+                // Precompute the fixed length block used by each R3 hash.
                 .r3_init = gfMul(.{ 3, 0, 0, 0 }, kk),
             };
         }
 
         const Direction = enum { encrypt, decrypt };
 
-        /// Encrypt plaintext to ciphertext using HCTR2++.
+        /// Encrypts plaintext with HCTR2++.
         ///
-        /// Parameters:
-        /// - `state`: Initialized cipher state
-        /// - `ciphertext`: Output buffer (must be same length as plaintext)
-        /// - `plaintext`: Input data to encrypt (minimum 16 bytes)
-        /// - `tweak`: Tweak value for domain separation
+        /// `ciphertext` must be the same length as `plaintext`, which must be
+        /// at least 16 bytes.
+        /// The tweak separates encryption domains and should be unique for the
+        /// strongest security bound.
         ///
-        /// Returns: `error.InputTooShort` if plaintext is less than 16 bytes.
-        ///
-        /// Security: Full BBB security requires unique tweaks; it degrades
-        /// gracefully with the number of messages sharing a tweak.
+        /// Returns `error.InputTooShort` for plaintexts shorter than 16 bytes.
         pub fn encrypt(state: *State, ciphertext: []u8, plaintext: []const u8, tweak: []const u8) !void {
             try state.hctr2pp(ciphertext, plaintext, tweak, .encrypt);
         }
 
-        /// Decrypt ciphertext to plaintext using HCTR2++.
+        /// Decrypts ciphertext with HCTR2++.
         ///
-        /// Parameters:
-        /// - `state`: Initialized cipher state
-        /// - `plaintext`: Output buffer (must be same length as ciphertext)
-        /// - `ciphertext`: Input data to decrypt (minimum 16 bytes)
-        /// - `tweak`: Tweak value used during encryption
+        /// `plaintext` must be the same length as `ciphertext`, which must be
+        /// at least 16 bytes.
         ///
-        /// Returns: `error.InputTooShort` if ciphertext is less than 16 bytes.
+        /// Returns `error.InputTooShort` for ciphertexts shorter than 16 bytes.
         pub fn decrypt(state: *State, plaintext: []u8, ciphertext: []const u8, tweak: []const u8) !void {
             try state.hctr2pp(plaintext, ciphertext, tweak, .decrypt);
         }
 
-        /// R3 re-keying: derive an ephemeral key and mask from a nonce.
+        /// Derives an ephemeral AES key and mask from an R3 nonce.
         ///
-        /// The paper leaves H_K(r) underspecified; this implementation hashes
-        /// r as a message with an empty tweak, using the same hash as the rest
-        /// of the mode: hash2n(kk, "", r), with the constant length-block step
-        /// precomputed as r3_init.
+        /// The paper does not define H_K(r) precisely.
+        /// This implementation hashes `r` as a message with an empty tweak,
+        /// reusing the mode's hash and a precomputed length block.
         fn r3(state: *const State, r: *const [aes_block_length]u8) struct { u: [aes_block_length]u8, v: [aes_block_length]u8 } {
             var block: [hash_block_length]u8 = @splat(0);
             block[0..aes_block_length].* = r.*;
@@ -304,9 +276,7 @@ pub fn Hctr2pp(comptime Aes: anytype) type {
                 return error.InputTooShort;
             }
 
-            // Encryption hashes the input bulk with h1 and the output bulk
-            // with h2; decryption swaps the two, which makes the code path
-            // self-inverse.
+            // Swapping the hash keys for decryption makes this path self-inverse.
             const hk_in = if (direction == .encrypt) state.h1 else state.h2;
             const hk_out = if (direction == .encrypt) state.h2 else state.h1;
 
@@ -352,8 +322,7 @@ pub fn Hctr2pp(comptime Aes: anytype) type {
             }
         }
 
-        /// CTR++ mode: counter keystream where every block uses a fresh
-        /// R3-derived key.
+        /// Generates counter-mode keystream with a fresh R3-derived key per block.
         fn ctrPp(state: *const State, dst: []u8, src: []const u8, r: [aes_block_length]u8, j: [aes_block_length]u8) void {
             var counter: u128 = 1;
             var i: usize = 0;
@@ -401,7 +370,7 @@ fn randomElem(state: *u64) Elem {
     return .{ xorshift(state), xorshift(state), xorshift(state), xorshift(state) };
 }
 
-/// Bit-by-bit GF(2^256) multiplication used as a reference for gfMul.
+/// Reference GF(2^256) multiplication used to check `gfMul`.
 fn slowMul(a: Elem, b: Elem) Elem {
     var res: Elem = @splat(0);
     var cur = a;
@@ -410,7 +379,7 @@ fn slowMul(a: Elem, b: Elem) Elem {
             if ((limb >> @intCast(bit)) & 1 == 1) {
                 res = elemXor(res, cur);
             }
-            // cur = cur * x mod x^256 + x^10 + x^5 + x^2 + 1
+            // Multiply by x and reduce with the field polynomial.
             const carry = cur[3] >> 63;
             cur[3] = (cur[3] << 1) | (cur[2] >> 63);
             cur[2] = (cur[2] << 1) | (cur[1] >> 63);
@@ -427,6 +396,24 @@ test "HCTR2++ gfMul matches bit-by-bit reference" {
         const a = randomElem(&state);
         const b = randomElem(&state);
         try std.testing.expectEqual(slowMul(a, b), gfMul(a, b));
+    }
+}
+
+test "HCTR2++ gfMul matches reference on dense operands" {
+    // Full residue classes ensure masked multiplication never leaks ordinary carries.
+    const ones: Elem = @splat(~@as(u64, 0));
+    try std.testing.expectEqual(slowMul(ones, ones), gfMul(ones, ones));
+
+    const classes = [_]u64{ 0x1111111111111111, 0x2222222222222222, 0x4444444444444444, 0x8888888888888888 };
+    var state: u64 = 0x0fedcba987654321;
+    for (classes) |cx| {
+        for (classes) |cy| {
+            var a = randomElem(&state);
+            var b = randomElem(&state);
+            a[1] |= cx;
+            b[2] |= cy;
+            try std.testing.expectEqual(slowMul(a, b), gfMul(a, b));
+        }
     }
 }
 

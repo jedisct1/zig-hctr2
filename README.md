@@ -138,13 +138,13 @@ Common Pre-configured Variants:
 You can create custom radix variants for any use case:
 
 ```zig
-// Base-36 for case-insensitive alphanumeric identifiers
+// Choose radix 36 when identifiers are case-insensitive.
 const Cipher36 = hctr2.Hctr2Fp(std.crypto.core.aes.Aes128, 36);
 
-// Base-58 for cryptocurrency-style addresses
+// Choose radix 58 for addresses that avoid lookalike characters.
 const Cipher58 = hctr2.Hctr3Fp(std.crypto.core.aes.Aes256, std.crypto.hash.sha2.Sha256, 58);
 
-// Base-62 for compact URL shorteners
+// Choose radix 62 for compact, case-sensitive identifiers.
 const Cipher62 = hctr2.Hctr2Fp(std.crypto.core.aes.Aes128, 62);
 ```
 
@@ -180,18 +180,18 @@ const std = @import("std");
 const hctr2 = @import("hctr2");
 
 pub fn main() !void {
-    // Initialize cipher with a 128-bit key
+    // A real application should load this key from secure storage.
     const key: [16]u8 = @splat(0x00);
     const cipher = hctr2.Hctr2_128.init(key);
 
-    // Encrypt a message
-    const plaintext = "Hello, World!!!!"; // Minimum 16 bytes
+    // HCTR2 accepts messages of at least one 16-byte block.
+    const plaintext = "Hello, World!!!!";
     const tweak = "sector-42";
     var ciphertext: [plaintext.len]u8 = undefined;
 
     try cipher.encrypt(&ciphertext, plaintext, &tweak);
 
-    // Decrypt the message
+    // Use the same tweak to recover the original message.
     var decrypted: [plaintext.len]u8 = undefined;
     try cipher.decrypt(&decrypted, &ciphertext, &tweak);
 }
@@ -203,7 +203,7 @@ pub fn main() !void {
 const hctr2 = @import("hctr2");
 
 pub fn main() !void {
-    // Initialize with AES-256
+    // A real application should load this key from secure storage.
     const key: [32]u8 = @splat(0x00);
     const cipher = hctr2.Hctr3_256.init(key);
 
@@ -222,8 +222,8 @@ pub fn main() !void {
 const hctr2 = @import("hctr2");
 
 pub fn main() !void {
-    // CHCTR2 requires two keys (combined into one 32-byte key for AES-128)
-    const key: [32]u8 = @splat(0x00);  // K1 || K2
+    // CHCTR2 keeps two AES-128 keys in this one 32-byte value.
+    const key: [32]u8 = @splat(0x00);
     var cipher = hctr2.Chctr2_128.init(key);
 
     const plaintext = "BBB-secure data!";
@@ -235,7 +235,7 @@ pub fn main() !void {
     var decrypted: [plaintext.len]u8 = undefined;
     try cipher.decrypt(&decrypted, &ciphertext, tweak);
 
-    // Or initialize with separate keys:
+    // This form is convenient when the two keys are stored separately.
     const key1: [16]u8 = @splat(0x01);
     const key2: [16]u8 = @splat(0x02);
     var cipher2 = hctr2.Chctr2_128.initSplit(key1, key2);
@@ -248,25 +248,25 @@ pub fn main() !void {
 const hctr2 = @import("hctr2");
 
 pub fn main() !void {
-    // Master key for key derivation
+    // The cipher derives a message key from this master key.
     const master_key: [16]u8 = @splat(0x00);
     const cipher = hctr2.Hctr2TwKD_128.init(master_key);
 
     const plaintext = "Sector data here";
-    // Full tweak: first 16 bytes (T0) are used for key derivation, remainder (T*) is passed to HCTR2.
-    // For CENC, the top two bits of the first byte in T0 must be zero.
-    const tweak = [_]u8{0x01} ** 20;
+    // The first 16 bytes select the derived key; the rest remains the HCTR2 tweak.
+    // Its first byte must leave its top two bits clear.
+    const tweak: [20]u8 = @splat(0x01);
     var ciphertext: [plaintext.len]u8 = undefined;
 
-    // Each unique tweak derives a unique HCTR2 key
+    // A distinct key-selection value produces a distinct derived key.
     try cipher.encrypt(&ciphertext, plaintext, tweak);
 
     var decrypted: [plaintext.len]u8 = undefined;
     try cipher.decrypt(&decrypted, &ciphertext, tweak);
 
-    // For longer tweaks, use split mode:
-    const kdf_tweak = [_]u8{0x02} ** 16; // T0 for key derivation (126 bits packed in 16 bytes)
-    const hctr2_tweak = "longer-tweak-passed-to-hctr2"; // Any length
+    // Split mode leaves the HCTR2 portion free to be any length.
+    const kdf_tweak: [16]u8 = @splat(0x02);
+    const hctr2_tweak = "longer-tweak-passed-to-hctr2";
     try cipher.encryptSplit(&ciphertext, plaintext, &kdf_tweak, hctr2_tweak);
 }
 ```
@@ -281,7 +281,7 @@ pub fn main() !void {
     var cipher = hctr2.Hctr2pp_128.init(key);
 
     const plaintext = "BBB-secure data!";
-    // Unique tweaks give security approaching 2^128; reuse degrades it gracefully
+    // Give each message its own tweak for the strongest security guarantee.
     const tweak = "unique-tweak-value";
     var ciphertext: [plaintext.len]u8 = undefined;
 
@@ -301,13 +301,12 @@ pub fn main() !void {
     const key: [16]u8 = @splat(0x00);
     const cipher = hctr2.Hctr2Fp_128_Decimal.init(key);
 
-    // Encrypt a credit card number (all digits remain digits)
-    const plaintext = "1234567890123456789012345678901234567890"; // Min 39 digits for decimal
+    // Decimal mode keeps the result decimal and needs at least 39 digits.
+    const plaintext = "1234567890123456789012345678901234567890";
     const tweak = "user-cc-field";
     var ciphertext: [plaintext.len]u8 = undefined;
 
     try cipher.encrypt(&ciphertext, plaintext, tweak);
-    // ciphertext contains only decimal digits
 
     var decrypted: [plaintext.len]u8 = undefined;
     try cipher.decrypt(&decrypted, &ciphertext, tweak);
@@ -321,14 +320,13 @@ const hctr2 = @import("hctr2");
 const std = @import("std");
 
 pub fn main() !void {
-    // Create a base-36 cipher (0-9, a-z)
+    // This radix covers decimal digits and lowercase letters.
     const Cipher = hctr2.Hctr2Fp(std.crypto.core.aes.Aes128, 36);
     const key: [16]u8 = @splat(0x00);
     const cipher = Cipher.init(key);
 
-    // Minimum length depends on radix
+    // Keep inputs at or above the minimum length for this radix.
     const min_len = Cipher.first_block_length;
-    // ... use cipher
 }
 ```
 

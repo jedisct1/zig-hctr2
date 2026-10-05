@@ -163,7 +163,7 @@ pub fn Chctr2(comptime Aes: anytype) type {
 
             // Compute tweak encoding for Polyval
             var block_bytes: [aes_block_length]u8 = @splat(0);
-            const tweak_len_bits = tweak.len * 8;
+            const tweak_len_bits = @as(u128, tweak.len) * 8;
             const tweak_len_bytes = if (m_star.len % aes_block_length == 0) 2 * tweak_len_bits + 2 else 2 * tweak_len_bits + 3;
             mem.writeInt(u128, &block_bytes, tweak_len_bytes, .little);
 

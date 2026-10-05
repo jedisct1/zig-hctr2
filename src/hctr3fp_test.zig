@@ -362,6 +362,9 @@ test "HCTR3-FP error on input too short" {
 }
 
 test "HCTR3-FP error on invalid digit in input" {
+    // Digit validation only runs when runtime safety is enabled.
+    if (!std.debug.runtime_safety) return error.SkipZigTest;
+
     const Cipher = hctr3fp.Hctr3Fp_128_Decimal;
     const key: [16]u8 = @splat(0x42);
     var cipher = Cipher.init(key);
@@ -676,4 +679,30 @@ test "HCTR3-FP encrypt/decrypt round-trip - various radices and message sizes" {
             try testing.expectEqualSlices(u8, plaintext, decrypted);
         }
     }
+}
+
+test "HCTR3-FP base conversion - values >= 2^128 are rejected" {
+    var decimal: [39]u8 = undefined;
+    hctr3fp.encodeBaseRadix(std.math.maxInt(u128), 10, &decimal);
+    try testing.expectEqual(std.math.maxInt(u128), try hctr3fp.decodeBaseRadix(&decimal, 10));
+
+    // 2^128 - 1 ends with the digit 5, so this is exactly 2^128.
+    decimal[0] += 1;
+    try testing.expectError(error.Overflow, hctr3fp.decodeBaseRadix(&decimal, 10));
+
+    // The top base-64 digit only holds 2 of the 128 bits.
+    var base64: [22]u8 = @splat(0);
+    base64[21] = 4;
+    try testing.expectError(error.Overflow, hctr3fp.decodeBaseRadix(&base64, 64));
+}
+
+test "HCTR3-FP rejects a first block >= 2^128" {
+    const Cipher = hctr3fp.Hctr3Fp_128_Base64;
+    const key: [16]u8 = @splat(0x42);
+    var cipher = Cipher.init(key);
+
+    const input: [Cipher.first_block_length + 8]u8 = @splat(63);
+    var output: [input.len]u8 = undefined;
+    try testing.expectError(error.Overflow, cipher.encrypt(&output, &input, "tweak"));
+    try testing.expectError(error.Overflow, cipher.decrypt(&output, &input, "tweak"));
 }

@@ -20,75 +20,32 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(lib);
 
-    // Add test step
     const test_step = b.step("test", "Run unit tests");
+    const test_files = [_][]const u8{
+        "src/root.zig",
+        "src/hctr2.zig",
+        "src/chctr2.zig",
+        "src/hctr2_twkd.zig",
+        "src/hctr2pp.zig",
+        "src/hctr3_test.zig",
+        "src/hctr2fp_test.zig",
+        "src/hctr3fp_test.zig",
+        "src/lfsr_test.zig",
+    };
+    for (test_files) |path| {
+        const test_mod = b.createModule(.{
+            .root_source_file = b.path(path),
+            .target = target,
+            .optimize = optimize,
+        });
+        const tests = b.addTest(.{
+            .name = std.fs.path.stem(path),
+            .root_module = test_mod,
+        });
+        test_step.dependOn(&b.addRunArtifact(tests).step);
+    }
 
-    // HCTR3 tests
-    const hctr3_test_mod = b.createModule(.{
-        .root_source_file = b.path("src/hctr3_test.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    const hctr3_tests = b.addTest(.{
-        .name = "hctr3_test",
-        .root_module = hctr3_test_mod,
-    });
-    const run_hctr3_tests = b.addRunArtifact(hctr3_tests);
-    test_step.dependOn(&run_hctr3_tests.step);
-
-    // Root module tests (if any)
-    const root_test_mod = b.createModule(.{
-        .root_source_file = b.path("src/root.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    const root_tests = b.addTest(.{
-        .name = "root_test",
-        .root_module = root_test_mod,
-    });
-    const run_root_tests = b.addRunArtifact(root_tests);
-    test_step.dependOn(&run_root_tests.step);
-
-    // HCTR2 tests (if any)
-    const hctr2_test_mod = b.createModule(.{
-        .root_source_file = b.path("src/hctr2.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    const hctr2_tests = b.addTest(.{
-        .name = "hctr2_test",
-        .root_module = hctr2_test_mod,
-    });
-    const run_hctr2_tests = b.addRunArtifact(hctr2_tests);
-    test_step.dependOn(&run_hctr2_tests.step);
-
-    // HCTR2++ tests
-    const hctr2pp_test_mod = b.createModule(.{
-        .root_source_file = b.path("src/hctr2pp.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    const hctr2pp_tests = b.addTest(.{
-        .name = "hctr2pp_test",
-        .root_module = hctr2pp_test_mod,
-    });
-    const run_hctr2pp_tests = b.addRunArtifact(hctr2pp_tests);
-    test_step.dependOn(&run_hctr2pp_tests.step);
-
-    // LFSR tests
-    const lfsr_test_mod = b.createModule(.{
-        .root_source_file = b.path("src/lfsr_test.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    const lfsr_tests = b.addTest(.{
-        .name = "lfsr_test",
-        .root_module = lfsr_test_mod,
-    });
-    const run_lfsr_tests = b.addRunArtifact(lfsr_tests);
-    test_step.dependOn(&run_lfsr_tests.step);
-
-    // Add benchmark step
+    // Keep performance measurements separate from the normal test run.
     const benchmark_step = b.step("bench", "Run benchmarks");
 
     const benchmark_mod = b.createModule(.{
@@ -103,7 +60,7 @@ pub fn build(b: *std.Build) void {
     const run_benchmark = b.addRunArtifact(benchmark_exe);
     benchmark_step.dependOn(&run_benchmark.step);
 
-    // Install the benchmark binary
+    // Make the benchmark executable available with the library artifacts.
     const install_benchmark = b.addInstallArtifact(benchmark_exe, .{});
     b.getInstallStep().dependOn(&install_benchmark.step);
 }

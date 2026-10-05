@@ -5,33 +5,20 @@ const mem = std.mem;
 const assert = std.debug.assert;
 const Polyval = crypto.onetimeauth.Polyval;
 
-/// HCTR3 with AES-128 encryption and SHA-256 tweak hashing.
+/// HCTR3 instantiated with AES-128 and SHA-256 tweak processing.
 pub const Hctr3_128 = Hctr3(aes.Aes128, crypto.hash.sha2.Sha256);
 
-/// HCTR3 with AES-256 encryption and SHA-256 tweak hashing.
+/// HCTR3 instantiated with AES-256 and SHA-256 tweak processing.
 pub const Hctr3_256 = Hctr3(aes.Aes256, crypto.hash.sha2.Sha256);
 
-/// HCTR3 is an improved version of HCTR2 with enhanced security properties.
+/// A length-preserving wide-block tweakable cipher with hashed tweaks.
 ///
-/// HCTR3 provides full-block diffusion and improved tweak handling compared to HCTR2.
-/// Like HCTR2, it requires no nonce or authentication tag.
+/// Do not encrypt different messages with the same key and tweak.
+/// HCTR3 does not authenticate ciphertexts; use an AEAD when integrity is required.
+/// Each input must contain at least one AES block.
 ///
-/// Construction differences from HCTR2:
-/// - Two-key construction (encryption key + derived authentication key)
-/// - SHA-256 hashing of tweaks for domain separation
-/// - ELK mode (Encrypted LFSR Keystream) instead of XCTR
-/// - Constant-time LFSR implementation
-///
-/// Security properties:
-/// - Ciphertext length equals plaintext length (no expansion)
-/// - Stronger security bounds than HCTR2
-/// - Requires unique (key, tweak) pairs for security
-/// - No authentication - consider AEAD if integrity protection is needed
-/// - Minimum message length: 16 bytes (one AES block)
-///
-/// Type parameters:
-/// - `Aes`: AES variant (Aes128 or Aes256)
-/// - `Hash`: Hash function for tweak processing (typically SHA-256)
+/// `Aes` selects the AES variant.
+/// `Hash` hashes tweaks before they enter the construction.
 pub fn Hctr3(comptime Aes: anytype, comptime Hash: anytype) type {
     const AesEncryptCtx = aes.AesEncryptCtx(Aes);
     const AesDecryptCtx = aes.AesDecryptCtx(Aes);
@@ -52,40 +39,30 @@ pub fn Hctr3(comptime Aes: anytype, comptime Hash: anytype) type {
         h: [Polyval.key_length]u8,
         l: [aes_block_length]u8,
 
-        /// Authentication tag length (0 - HCTR3 is unauthenticated).
+        /// HCTR3 does not produce authentication tags.
         pub const tag_length = 0;
 
-        /// Nonce length (0 - HCTR3 uses tweaks instead).
+        /// HCTR3 uses caller-supplied tweaks rather than nonces.
         pub const nonce_length = 0;
 
-        /// Encryption key length in bytes (16 for AES-128, 32 for AES-256).
+        /// Length of an AES key for this instantiation.
         pub const key_length = Aes.key_bits / 8;
 
-        /// AES block length in bytes (always 16).
+        /// AES block length.
         pub const block_length = aes_block_length;
 
-        /// Initialize HCTR3 cipher state from an encryption key.
-        ///
-        /// Derives a secondary authentication key (Ke) from the encryption key for the two-key construction.
-        ///
-        /// Parameters:
-        /// - `key`: Encryption key (16 bytes for AES-128, 32 bytes for AES-256)
-        ///
-        /// Returns: Initialized cipher state ready for encryption/decryption operations.
+        /// Creates a cipher state and derives its internal subkeys from `key`.
         pub fn init(key: [Aes.key_bits / 8]u8) State {
             const ks_enc = Aes.initEnc(key);
             const ks_dec = AesDecryptCtx.initFromEnc(ks_enc);
 
-            // Derive Ke
             var ke_bytes: [aes_block_length]u8 = @splat(0);
             ks_enc.encrypt(&ke_bytes, &ke_bytes);
 
-            // Handle different key sizes
             var ke_key: [key_length]u8 = undefined;
             if (key_length <= aes_block_length) {
                 @memcpy(&ke_key, ke_bytes[0..key_length]);
             } else {
-                // For larger keys, we need multiple blocks
                 @memcpy(ke_key[0..aes_block_length], &ke_bytes);
                 var extra_block: [aes_block_length]u8 = @splat(1);
                 ks_enc.encrypt(&extra_block, &extra_block);
@@ -95,7 +72,6 @@ pub fn Hctr3(comptime Aes: anytype, comptime Hash: anytype) type {
             const ke_enc = Aes.initEnc(ke_key);
             const ke_dec = AesDecryptCtx.initFromEnc(ke_enc);
 
-            // Derive Kh and L
             var kh_bytes: [aes_block_length]u8 = @splat(0);
             ke_enc.encrypt(&kh_bytes, &kh_bytes);
 
@@ -117,30 +93,19 @@ pub fn Hctr3(comptime Aes: anytype, comptime Hash: anytype) type {
 
         const Direction = enum { encrypt, decrypt };
 
-        /// Encrypt plaintext to ciphertext using HCTR3.
+        /// Encrypts `plaintext` with `tweak` into `ciphertext`.
         ///
-        /// Parameters:
-        /// - `state`: Initialized cipher state
-        /// - `ciphertext`: Output buffer (must be same length as plaintext)
-        /// - `plaintext`: Input data to encrypt (minimum 16 bytes)
-        /// - `tweak`: Tweak value for domain separation (can be empty, but must be unique per message with same key)
-        ///
-        /// Returns: `error.InputTooShort` if plaintext is less than 16 bytes.
-        ///
-        /// Security: Never reuse the same (key, tweak) pair for different messages.
+        /// The buffers must have equal length, and plaintext must be at least one block.
+        /// Returns `error.InputTooShort` otherwise.
+        /// Never reuse a key and tweak pair for different messages.
         pub fn encrypt(state: *State, ciphertext: []u8, plaintext: []const u8, tweak: []const u8) !void {
             try state.hctr3(ciphertext, plaintext, tweak, .encrypt);
         }
 
-        /// Decrypt ciphertext to plaintext using HCTR3.
+        /// Decrypts `ciphertext` with its original `tweak` into `plaintext`.
         ///
-        /// Parameters:
-        /// - `state`: Initialized cipher state
-        /// - `plaintext`: Output buffer (must be same length as ciphertext)
-        /// - `ciphertext`: Input data to decrypt (minimum 16 bytes)
-        /// - `tweak`: Tweak value used during encryption
-        ///
-        /// Returns: `error.InputTooShort` if ciphertext is less than 16 bytes.
+        /// The buffers must have equal length, and ciphertext must be at least one block.
+        /// Returns `error.InputTooShort` otherwise.
         pub fn decrypt(state: *State, plaintext: []u8, ciphertext: []const u8, tweak: []const u8) !void {
             try state.hctr3(plaintext, ciphertext, tweak, .decrypt);
         }
@@ -153,14 +118,12 @@ pub fn Hctr3(comptime Aes: anytype, comptime Hash: anytype) type {
             const m = src[0..aes_block_length];
             const n = src[aes_block_length..];
 
-            // Step 1: Hash the tweak/associated data to a single block
             var t: [aes_block_length]u8 = undefined;
             var hasher = Hash.init(.{});
             hasher.update(tweak);
             var hash_out: [hash_digest_length]u8 = undefined;
             hasher.final(&hash_out);
 
-            // Truncate or pad hash to block size
             if (hash_digest_length >= aes_block_length) {
                 @memcpy(&t, hash_out[0..aes_block_length]);
             } else {
@@ -168,15 +131,13 @@ pub fn Hctr3(comptime Aes: anytype, comptime Hash: anytype) type {
                 @memset(t[hash_digest_length..], 0);
             }
 
-            // Step 2: Process with POLYVAL
             var block_bytes: [aes_block_length]u8 = @splat(0);
-            const tweak_len_bits = tweak.len * 8;
+            const tweak_len_bits = @as(u128, tweak.len) * 8;
             const tweak_len_bytes = if (n.len % aes_block_length == 0) 2 * tweak_len_bits + 2 else 2 * tweak_len_bits + 3;
             mem.writeInt(u128, &block_bytes, tweak_len_bytes, .little);
             var poly = state.poly;
             poly.update(&block_bytes);
 
-            // Update with hashed tweak
             poly.update(&t);
 
             const poly_after_tweak = poly;
@@ -222,7 +183,6 @@ pub fn Hctr3(comptime Aes: anytype, comptime Hash: anytype) type {
             return hh;
         }
 
-        // ELK mode - Encrypted LFSR Keystream
         fn elk(state: *const State, dst: []u8, src: []const u8, seed: [aes_block_length]u8) void {
             const batch = Aes.block.parallel.optimal_parallel_blocks;
             const block_length_batch = aes_block_length * batch;
@@ -264,29 +224,17 @@ pub fn Hctr3(comptime Aes: anytype, comptime Hash: anytype) type {
             }
         }
 
-        /// Linear Feedback Shift Register (LFSR) next state function.
+        /// Advances an LFSR state without data-dependent control flow.
         ///
-        /// Computes the next LFSR state using Galois configuration with primitive polynomials:
-        /// - 128-bit: x^128 + x^7 + x^2 + x + 1
-        /// - 256-bit: x^256 + x^254 + x^251 + x^246 + 1
-        ///
-        /// Implementation is constant-time to prevent timing side-channel attacks.
-        ///
-        /// Parameters:
-        /// - `state`: Current LFSR state (16 bytes for AES-128, 32 bytes for AES-256)
-        ///
-        /// Returns: Next LFSR state.
+        /// AES-128 uses x^128 + x^7 + x^2 + x + 1.
+        /// AES-256 uses x^256 + x^254 + x^251 + x^246 + 1.
         pub fn lfsr_next(state: [aes_block_length]u8) [aes_block_length]u8 {
             var result = state;
 
-            // LFSR implementation using Galois configuration - constant time
             if (aes_block_length == 16) {
-                // Extract MSB and create mask (all 1s if MSB set, all 0s otherwise)
-                // This avoids conditional jumps
                 const msb = result[15] >> 7;
-                const mask = -%msb; // Two's complement: 0x00 -> 0x00, 0x01 -> 0xFF
+                const mask = -%msb;
 
-                // Shift left by 1 bit
                 var carry: u8 = 0;
                 for (&result) |*byte| {
                     const new_carry = (byte.* & 0x80) >> 7;
@@ -294,19 +242,11 @@ pub fn Hctr3(comptime Aes: anytype, comptime Hash: anytype) type {
                     carry = new_carry;
                 }
 
-                // Apply feedback polynomial unconditionally using mask
-                // Using primitive polynomial: x^128 + x^7 + x^2 + x + 1
-                // This is a standard primitive polynomial for 128-bit LFSRs
-                result[0] ^= 0x87 & mask; // Represents x^7 + x^2 + x + 1 in the low byte
+                result[0] ^= 0x87 & mask;
             } else if (aes_block_length == 32) {
-                // 256-bit LFSR implementation - constant time
-                // Using the polynomial from the paper: x^256 + x^254 + x^251 + x^246 + 1
-
-                // Extract MSB and create mask (all 1s if MSB set, all 0s otherwise)
                 const msb = result[31] >> 7;
-                const mask = -%msb; // Two's complement: 0x00 -> 0x00, 0x01 -> 0xFF
+                const mask = -%msb;
 
-                // Shift left by 1 bit
                 var carry: u8 = 0;
                 for (&result) |*byte| {
                     const new_carry = (byte.* & 0x80) >> 7;

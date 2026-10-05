@@ -1,6 +1,7 @@
 const std = @import("std");
 const crypto = std.crypto;
 const aes = crypto.core.aes;
+const math = std.math;
 const mem = std.mem;
 const assert = std.debug.assert;
 const Polyval = crypto.onetimeauth.Polyval;
@@ -98,6 +99,7 @@ pub fn encodeBaseRadix(value: u128, comptime radix: u16, output: []u8) void {
 
 /// Decode base-RADIX digits (little-endian) to a 128-bit value.
 /// Returns error.InvalidDigit if any digit >= radix (debug builds only).
+/// Returns error.Overflow if the digits encode a value that doesn't fit in 128 bits.
 pub fn decodeBaseRadix(digits: []const u8, comptime radix: u16) !u128 {
     if (radix < 2 or radix > 256) @compileError("radix must be in [2, 256]");
 
@@ -121,22 +123,20 @@ pub fn decodeBaseRadix(digits: []const u8, comptime radix: u16) !u128 {
 
         for (digits, 0..) |digit, i| {
             const shift = @as(u7, @intCast(i * bits_per_digit));
-            value |= @as(u128, digit) << shift;
+            value |= try math.shlExact(u128, digit, shift);
         }
 
         return value;
     }
 
-    // Accumulate from most significant to least significant (reverse order)
-    // For large radixes where radix^k > 2^128, intermediate values during decoding
-    // can exceed 2^128 even though the final result should be < 2^128 for valid
-    // encoded values. We use wrapping arithmetic to handle this correctly, as we're
-    // effectively working modulo 2^128 in the finite field.
+    // Accumulate from most significant to least significant (reverse order).
+    // When radix^k > 2^128, some digit strings encode values that don't fit in 128 bits.
+    // They are outside the valid domain and must be rejected, not reduced modulo 2^128.
     var value: u128 = 0;
     var i = digits.len;
     while (i > 0) {
         i -= 1;
-        value = value *% radix +% digits[i];
+        value = try math.add(u128, try math.mul(u128, value, radix), digits[i]);
     }
 
     return value;
@@ -248,6 +248,7 @@ pub fn Hctr2Fp(comptime Aes: anytype, comptime radix: u16) type {
         /// Returns:
         /// - `error.InputTooShort` if plaintext is less than first_block_length
         /// - `error.InvalidDigit` if any digit >= radix (debug builds only)
+        /// - `error.Overflow` if the first block encodes a value >= 2^128
         ///
         /// Security: Never reuse the same (key, tweak) pair for different messages.
         pub fn encrypt(state: *State, ciphertext: []u8, plaintext: []const u8, tweak: []const u8) !void {
@@ -267,6 +268,7 @@ pub fn Hctr2Fp(comptime Aes: anytype, comptime radix: u16) type {
         /// Returns:
         /// - `error.InputTooShort` if ciphertext is less than first_block_length
         /// - `error.InvalidDigit` if any digit >= radix (debug builds only)
+        /// - `error.Overflow` if the first block encodes a value >= 2^128
         pub fn decrypt(state: *State, plaintext: []u8, ciphertext: []const u8, tweak: []const u8) !void {
             try state.hctr2fp(plaintext, ciphertext, tweak, .decrypt);
         }
@@ -289,7 +291,7 @@ pub fn Hctr2Fp(comptime Aes: anytype, comptime radix: u16) type {
 
             // Hash tweak with Polyval
             var block_bytes: [aes_block_length]u8 = @splat(0);
-            const tweak_len_bits = tweak.len * 8;
+            const tweak_len_bits = @as(u128, tweak.len) * 8;
             const tweak_len_bytes = if (tail.len % aes_block_length == 0) 2 * tweak_len_bits + 2 else 2 * tweak_len_bits + 3;
             mem.writeInt(u128, &block_bytes, tweak_len_bytes, .little);
             var poly = state.poly;

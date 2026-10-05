@@ -147,6 +147,9 @@ test "base conversion round-trip - radix 256" {
 }
 
 test "base conversion - invalid digit detection" {
+    // Digit validation only runs when runtime safety is enabled.
+    if (!std.debug.runtime_safety) return error.SkipZigTest;
+
     const radix = 10;
     var buffer: [39]u8 = @splat(0);
     buffer[10] = 10; // Invalid digit (>= radix)
@@ -359,6 +362,9 @@ test "HCTR2-FP error on input too short" {
 }
 
 test "HCTR2-FP error on invalid digit in input" {
+    // Digit validation only runs when runtime safety is enabled.
+    if (!std.debug.runtime_safety) return error.SkipZigTest;
+
     const Cipher = hctr2fp.Hctr2Fp_128_Decimal;
     const key: [16]u8 = @splat(0x42);
     var cipher = Cipher.init(key);
@@ -659,4 +665,38 @@ test "HCTR2-FP encrypt/decrypt round-trip - various radices and message sizes" {
             try testing.expectEqualSlices(u8, plaintext, decrypted);
         }
     }
+}
+
+test "base conversion - values >= 2^128 are rejected" {
+    var decimal: [39]u8 = undefined;
+    hctr2fp.encodeBaseRadix(std.math.maxInt(u128), 10, &decimal);
+    try testing.expectEqual(std.math.maxInt(u128), try hctr2fp.decodeBaseRadix(&decimal, 10));
+
+    // 2^128 - 1 ends with the digit 5, so this is exactly 2^128.
+    decimal[0] += 1;
+    try testing.expectError(error.Overflow, hctr2fp.decodeBaseRadix(&decimal, 10));
+
+    @memset(&decimal, 9);
+    try testing.expectError(error.Overflow, hctr2fp.decodeBaseRadix(&decimal, 10));
+
+    // The top base-64 digit only holds 2 of the 128 bits.
+    var base64: [22]u8 = @splat(0);
+    base64[21] = 4;
+    try testing.expectError(error.Overflow, hctr2fp.decodeBaseRadix(&base64, 64));
+
+    const radix94: [20]u8 = @splat(93);
+    try testing.expectError(error.Overflow, hctr2fp.decodeBaseRadix(&radix94, 94));
+}
+
+test "HCTR2-FP rejects a first block >= 2^128" {
+    const Cipher = hctr2fp.Hctr2Fp_128_Decimal;
+    const key: [16]u8 = @splat(0x42);
+    var cipher = Cipher.init(key);
+
+    // Without this check, two plaintexts whose first blocks are congruent
+    // modulo 2^128 would encrypt to the same ciphertext.
+    const input: [Cipher.first_block_length + 8]u8 = @splat(9);
+    var output: [input.len]u8 = undefined;
+    try testing.expectError(error.Overflow, cipher.encrypt(&output, &input, "tweak"));
+    try testing.expectError(error.Overflow, cipher.decrypt(&output, &input, "tweak"));
 }
