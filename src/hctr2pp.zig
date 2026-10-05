@@ -545,9 +545,8 @@ test "HCTR2++-128 avalanche" {
     try state.encrypt(&ciphertext1, &plaintext, "t");
     try state.encrypt(&ciphertext2, &modified, "t");
 
-    // Flipping the last plaintext bit must change the first ciphertext block.
+    // A change in the bulk must affect both the leading block and bulk output.
     try std.testing.expect(!mem.eql(u8, ciphertext1[0..16], ciphertext2[0..16]));
-    // ... and the keystream over the bulk as well.
     try std.testing.expect(!mem.eql(u8, ciphertext1[16..48], ciphertext2[16..48]));
 }
 
@@ -610,10 +609,8 @@ fn hexElem(comptime hex: []const u8) Elem {
     return elemFromBytes(&bytes);
 }
 
-// Known-answer vectors generated with an independent Python implementation of
-// the Figure 4 pseudocode: big-int GF(2^256) arithmetic and AES from the
-// cryptography library, no shared code. They match the Rust implementation in
-// rust-hctr2.
+// These known-answer vectors come from an independent Python implementation
+// of the Figure 4 pseudocode and also match rust-hctr2.
 
 test "HCTR2++ KAT subkeys" {
     const state = Hctr2pp_128.init(testKey128());

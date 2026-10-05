@@ -1,15 +1,14 @@
 const std = @import("std");
 const testing = std.testing;
 
-// Direct LFSR implementation for testing
+// Reference transition used by the LFSR tests.
 fn lfsr_next_128(state: [16]u8) [16]u8 {
     var result = state;
 
-    // Extract MSB and create mask (all 1s if MSB set, all 0s otherwise)
     const msb = result[15] >> 7;
-    const mask = -%msb; // Two's complement: 0x00 -> 0x00, 0x01 -> 0xFF
+    // Use an all-ones mask when the outgoing bit is set to avoid branching.
+    const mask = -%msb;
 
-    // Shift left by 1 bit
     var carry: u8 = 0;
     for (&result) |*byte| {
         const new_carry = (byte.* & 0x80) >> 7;

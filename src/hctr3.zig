@@ -254,21 +254,9 @@ pub fn Hctr3(comptime Aes: anytype, comptime Hash: anytype) type {
                     carry = new_carry;
                 }
 
-                // Apply feedback polynomial unconditionally using mask
-                // x^256 + x^254 + x^251 + x^246 + 1
-                // The x^256 term is implicit (it's the feedback itself)
-                // We need to XOR at positions: 254, 251, 246, and 0
-
-                // Position 0 (constant term)
                 result[0] ^= 0x01 & mask;
-
-                // Position 246: byte 30, bit 6
                 result[30] ^= 0x40 & mask;
-
-                // Position 251: byte 31, bit 3
                 result[31] ^= 0x08 & mask;
-
-                // Position 254: byte 31, bit 6
                 result[31] ^= 0x40 & mask;
             }
 

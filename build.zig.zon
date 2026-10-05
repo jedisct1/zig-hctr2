@@ -1,8 +1,8 @@
 .{
     .name = .hctr2,
-    .version = "0.1.6",
+    .version = "0.1.9",
     .fingerprint = 0xc0d5190471ccee9a,
-    .minimum_zig_version = "0.15.1",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{},
     .paths = .{
         "build.zig",
