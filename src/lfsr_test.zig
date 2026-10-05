@@ -60,28 +60,24 @@ fn lfsr_next_256(state: [32]u8) [32]u8 {
 }
 
 test "128-bit LFSR basic operation" {
-    // Test that the LFSR produces different states for 128-bit blocks
     const initial_state = [_]u8{0x01} ++ @as([15]u8, @splat(0x00));
 
     var state1 = initial_state;
     var state2 = lfsr_next_128(state1);
     var state3 = lfsr_next_128(state2);
 
-    // States should all be different
     try testing.expect(!std.mem.eql(u8, &state1, &state2));
     try testing.expect(!std.mem.eql(u8, &state2, &state3));
     try testing.expect(!std.mem.eql(u8, &state1, &state3));
 }
 
 test "256-bit LFSR basic operation" {
-    // Test that the LFSR produces different states for 256-bit blocks
     const initial_state = [_]u8{0x01} ++ @as([31]u8, @splat(0x00));
 
     var state1 = initial_state;
     var state2 = lfsr_next_256(state1);
     var state3 = lfsr_next_256(state2);
 
-    // States should all be different
     try testing.expect(!std.mem.eql(u8, &state1, &state2));
     try testing.expect(!std.mem.eql(u8, &state2, &state3));
     try testing.expect(!std.mem.eql(u8, &state1, &state3));
@@ -110,26 +106,20 @@ test "256-bit LFSR period test" {
     const initial_state = [_]u8{0x01} ++ @as([31]u8, @splat(0x00));
     var state = initial_state;
 
-    // Run for a reasonable number of iterations
     const iterations = 1000;
     for (0..iterations) |_| {
         state = lfsr_next_256(state);
     }
 
-    // Should not have returned to initial state
     try testing.expect(!std.mem.eql(u8, &state, &initial_state));
 }
 
 test "256-bit LFSR shift behavior" {
-    // Test basic shift behavior
     var state = @as([31]u8, @splat(0x00)) ++ [_]u8{0x01};
-
-    // After one shift, bit should move to position 1
     state = lfsr_next_256(state);
     try testing.expect(state[31] == 0x02);
     try testing.expect(state[0] == 0x00);
 
-    // After another shift, bit should move to position 2
     state = lfsr_next_256(state);
     try testing.expect(state[31] == 0x04);
     try testing.expect(state[0] == 0x00);

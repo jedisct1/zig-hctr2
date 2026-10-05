@@ -20,7 +20,6 @@ fn benchmarkHCTR2_128(allocator: std.mem.Allocator, io: Io) !void {
     const key: [16]u8 = @splat(0x00);
     const tweak: [16]u8 = @splat(0x00);
 
-    // Benchmark initialization
     const start_init = readNs(io);
     var cipher = hctr2.Hctr2_128.init(key);
     const init_time = readNs(io) - start_init;

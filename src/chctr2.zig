@@ -44,13 +44,11 @@ pub fn Chctr2(comptime Aes: anytype) type {
     return struct {
         const State = @This();
 
-        // First round (K1)
         ks1_enc: AesEncryptCtx,
         ks1_dec: AesDecryptCtx,
         h1: [Polyval.key_length]u8,
         l1: [aes_block_length]u8,
 
-        // Second round (K2)
         ks2_enc: AesEncryptCtx,
         ks2_dec: AesDecryptCtx,
         h2: [Polyval.key_length]u8,
@@ -91,7 +89,6 @@ pub fn Chctr2(comptime Aes: anytype) type {
         ///
         /// Returns: Initialized cipher state ready for encryption/decryption operations.
         pub fn initSplit(key1: [single_key_length]u8, key2: [single_key_length]u8) State {
-            // Initialize first round (K1)
             const ks1_enc = Aes.initEnc(key1);
             const ks1_dec = AesDecryptCtx.initFromEnc(ks1_enc);
 
@@ -100,7 +97,6 @@ pub fn Chctr2(comptime Aes: anytype) type {
             const h1 = block_bytes1[0..aes_block_length].*;
             const l1 = block_bytes1[aes_block_length..].*;
 
-            // Initialize second round (K2)
             const ks2_enc = Aes.initEnc(key2);
             const ks2_dec = AesDecryptCtx.initFromEnc(ks2_enc);
 
@@ -161,13 +157,11 @@ pub fn Chctr2(comptime Aes: anytype) type {
             const m0 = src[0..aes_block_length];
             const m_star = src[aes_block_length..];
 
-            // Compute tweak encoding for Polyval
             var block_bytes: [aes_block_length]u8 = @splat(0);
             const tweak_len_bits = @as(u128, tweak.len) * 8;
             const tweak_len_bytes = if (m_star.len % aes_block_length == 0) 2 * tweak_len_bits + 2 else 2 * tweak_len_bits + 3;
             mem.writeInt(u128, &block_bytes, tweak_len_bytes, .little);
 
-            // Initialize both Polyval instances and process tweak
             var poly1 = Polyval.init(&state.h1);
             poly1.update(&block_bytes);
             poly1.update(tweak);
@@ -185,13 +179,10 @@ pub fn Chctr2(comptime Aes: anytype) type {
                 poly2.update(pad[0..pad_len]);
             }
 
-            // Save state after tweak for later
             const poly1_after_tweak = poly1;
             const poly2_after_tweak = poly2;
 
             if (direction == .encrypt) {
-                // === ENCRYPTION ===
-                // Round 1: hash1-encrypt1
                 const z1 = absorb(&poly1, m_star);
                 var x1_0: [aes_block_length]u8 = undefined;
                 for (&x1_0, z1, m0) |*p, z, m| {

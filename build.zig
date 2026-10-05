@@ -45,7 +45,6 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&b.addRunArtifact(tests).step);
     }
 
-    // Keep performance measurements separate from the normal test run.
     const benchmark_step = b.step("bench", "Run benchmarks");
 
     const benchmark_mod = b.createModule(.{
@@ -60,7 +59,6 @@ pub fn build(b: *std.Build) void {
     const run_benchmark = b.addRunArtifact(benchmark_exe);
     benchmark_step.dependOn(&run_benchmark.step);
 
-    // Make the benchmark executable available with the library artifacts.
     const install_benchmark = b.addInstallArtifact(benchmark_exe, .{});
     b.getInstallStep().dependOn(&install_benchmark.step);
 }
