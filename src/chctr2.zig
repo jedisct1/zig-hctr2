@@ -13,26 +13,21 @@ pub const Chctr2_128 = Chctr2(aes.Aes128);
 /// Achieves 2n/3-bit (approximately 85-bit) multi-user security.
 pub const Chctr2_256 = Chctr2(aes.Aes256);
 
-/// CHCTR2 (Cascaded HCTR2) is a beyond-birthday-bound secure wide-block tweakable cipher.
+/// A length-preserving wide-block tweakable cipher that's stronger than plain HCTR2.
 ///
-/// CHCTR2 achieves 2n/3-bit multi-user security (approximately 85 bits with 128-bit blocks)
-/// by cascading HCTR2 twice with two independent keys. This provides significantly higher
-/// security than standard HCTR2's birthday-bound (64-bit) security.
+/// It encrypts with HCTR2 under the first key, then again under the second key.
+/// From "Beyond-Birthday-Bound Security with HCTR2", ASIACRYPT 2025.
 ///
-/// Construction (from "Beyond-Birthday-Bound Security with HCTR2", ASIACRYPT 2025):
-/// - Uses two independent keys K1 and K2
-/// - CHCTR2[K1,K2](T,M) = HCTR2[K2](T, HCTR2[K1](T, M))
-/// - Optimized: middle hash layer combines H1 and H2: Z_{1,2} = H1(T,R) ⊕ H2(T,R)
-/// - Cost per block: 2 BC calls + 3 field multiplications
+/// The middle step XORs the hashes from both keys.
+/// Don't replace that with one hash keyed with H1 XOR H2, the result would be different.
 ///
-/// Security properties:
-/// - Beyond-birthday-bound: ~85-bit security vs HCTR2's ~64-bit
-/// - No restrictions on tweak usage
-/// - Multi-user secure
-/// - Ciphertext length equals plaintext length
+/// Each block costs 2 AES calls and 4 field multiplications.
 ///
-/// Type parameters:
-/// - `Aes`: AES variant (Aes128 or Aes256)
+/// You get about 85 bits of multi-user security instead of 64, with no limits on how tweaks are used.
+/// That assumes the data is spread over many users.
+/// A single user encrypting long messages gets a bit less, around 83 bits with 4 KiB sectors.
+///
+/// `Aes` selects the AES variant.
 pub fn Chctr2(comptime Aes: anytype) type {
     const AesEncryptCtx = aes.AesEncryptCtx(Aes);
     const AesDecryptCtx = aes.AesDecryptCtx(Aes);
@@ -145,9 +140,7 @@ pub fn Chctr2(comptime Aes: anytype) type {
             try state.chctr2(plaintext, ciphertext, tweak, .decrypt);
         }
 
-        /// Optimized CHCTR2 implementation.
-        /// Structure: hash1-encrypt1-hash_{1,2}-encrypt2-hash2
-        /// where hash_{1,2}(T,R) = H1(T,R) ⊕ H2(T,R)
+        /// Same output as calling HCTR2 twice, but each key only hashes the tweak once.
         fn chctr2(state: *State, dst: []u8, src: []const u8, tweak: []const u8, comptime direction: Direction) !void {
             assert(dst.len == src.len);
             if (src.len < aes_block_length) {
@@ -382,103 +375,70 @@ pub fn Chctr2(comptime Aes: anytype) type {
     };
 }
 
-test "CHCTR2-128 encrypt/decrypt round-trip" {
-    const key = @as([32]u8, @splat(0)); // 32 bytes for two AES-128 keys
-    var state = Chctr2_128.init(key);
-
-    const plaintext = "Hello, CHCTR2 World!";
-    var ciphertext: [plaintext.len]u8 = undefined;
-    var decrypted: [plaintext.len]u8 = undefined;
-
-    const tweak = "test tweak";
-
-    try state.encrypt(&ciphertext, plaintext, tweak);
-    try state.decrypt(&decrypted, &ciphertext, tweak);
-
-    try std.testing.expectEqualSlices(u8, plaintext, &decrypted);
+fn sequence(comptime n: usize) [n]u8 {
+    var bytes: [n]u8 = undefined;
+    for (&bytes, 0..) |*b, i| b.* = @truncate(i);
+    return bytes;
 }
 
-test "CHCTR2-256 encrypt/decrypt round-trip" {
-    const key = @as([64]u8, @splat(0)); // 64 bytes for two AES-256 keys
-    var state = Chctr2_256.init(key);
-
-    const plaintext = "Hello, CHCTR2-256 World!";
-    var ciphertext: [plaintext.len]u8 = undefined;
-    var decrypted: [plaintext.len]u8 = undefined;
-
-    const tweak = "test tweak 256";
-
-    try state.encrypt(&ciphertext, plaintext, tweak);
-    try state.decrypt(&decrypted, &ciphertext, tweak);
-
-    try std.testing.expectEqualSlices(u8, plaintext, &decrypted);
+fn expectCiphertext(cipher: anytype, comptime len: usize, tweak: []const u8, hex: []const u8) !void {
+    var expected: [len]u8 = undefined;
+    var output: [len]u8 = undefined;
+    _ = try std.fmt.hexToBytes(&expected, hex);
+    try cipher.encrypt(&output, &sequence(len), tweak);
+    try std.testing.expectEqualSlices(u8, &expected, &output);
 }
 
-test "CHCTR2-128 minimum block size" {
-    const key = @as([32]u8, @splat(0));
-    var state = Chctr2_128.init(key);
+test "CHCTR2 is HCTR2 applied twice" {
+    const hctr2 = @import("hctr2.zig");
+    const message = sequence(1023);
 
-    // Exactly 16 bytes (minimum)
-    const plaintext = @as([16]u8, @splat(0x42));
-    var ciphertext: [16]u8 = undefined;
-    var decrypted: [16]u8 = undefined;
+    inline for (.{
+        .{ Chctr2_128, hctr2.Hctr2_128 },
+        .{ Chctr2_256, hctr2.Hctr2_256 },
+    }) |variant| {
+        const Cascade, const Single = variant;
+        const key = sequence(Cascade.key_length);
+        const key1 = key[0..Cascade.single_key_length].*;
+        const key2 = key[Cascade.single_key_length..].*;
 
-    try state.encrypt(&ciphertext, &plaintext, "");
-    try state.decrypt(&decrypted, &ciphertext, "");
+        var cascade = Cascade.initSplit(key1, key2);
+        var first = Single.init(key1);
+        var second = Single.init(key2);
 
-    try std.testing.expectEqualSlices(u8, &plaintext, &decrypted);
+        for ([_][]const u8{ "", "tweak", "a tweak longer than one block" }) |tweak| {
+            for ([_]usize{ 16, 17, 32, 1023 }) |len| {
+                var middle: [1023]u8 = undefined;
+                var expected: [1023]u8 = undefined;
+                var output: [1023]u8 = undefined;
+                var decrypted: [1023]u8 = undefined;
+
+                try first.encrypt(middle[0..len], message[0..len], tweak);
+                try second.encrypt(expected[0..len], middle[0..len], tweak);
+                try cascade.encrypt(output[0..len], message[0..len], tweak);
+                try std.testing.expectEqualSlices(u8, expected[0..len], output[0..len]);
+
+                try cascade.decrypt(decrypted[0..len], output[0..len], tweak);
+                try std.testing.expectEqualSlices(u8, message[0..len], decrypted[0..len]);
+            }
+        }
+    }
 }
 
-test "CHCTR2-128 input too short" {
-    const key = @as([32]u8, @splat(0));
-    var state = Chctr2_128.init(key);
+test "CHCTR2 known answers" {
+    // Expected values were computed independently from the paper.
+    var cipher128 = Chctr2_128.init(sequence(32));
+    var cipher256 = Chctr2_256.init(sequence(64));
 
-    const plaintext = @as([15]u8, @splat(0x42)); // Too short
-    var ciphertext: [15]u8 = undefined;
-
-    try std.testing.expectError(error.InputTooShort, state.encrypt(&ciphertext, &plaintext, ""));
+    try expectCiphertext(&cipher128, 16, "", "2f4e9b98ee561c3cdc589fec85032854");
+    try expectCiphertext(&cipher128, 33, "tweak", "17bf924f79cf31d420d8989babe6f01562f05365cde3afeffd7f7f52075ec66332");
+    try expectCiphertext(&cipher256, 65, "tweak 256", "dea1f0fa322fd77c2219064ed27d585b2f21f302b85b85218586830825b08c5ae19ab21ac04108daf97850f0d294c307f8ab5f2bb48a88877750531b1261940380");
 }
 
-test "CHCTR2-128 different tweaks produce different ciphertexts" {
-    const key = @as([32]u8, @splat(0));
-    var state = Chctr2_128.init(key);
+test "CHCTR2 rejects short input" {
+    var cipher = Chctr2_128.init(@splat(0));
+    const input: [15]u8 = @splat(0x42);
+    var output: [15]u8 = undefined;
 
-    const plaintext = @as([32]u8, @splat(0x42));
-    var ciphertext1: [32]u8 = undefined;
-    var ciphertext2: [32]u8 = undefined;
-
-    try state.encrypt(&ciphertext1, &plaintext, "tweak1");
-    try state.encrypt(&ciphertext2, &plaintext, "tweak2");
-
-    try std.testing.expect(!std.mem.eql(u8, &ciphertext1, &ciphertext2));
-}
-
-test "CHCTR2-128 initSplit" {
-    const key1 = @as([16]u8, @splat(0x01));
-    const key2 = @as([16]u8, @splat(0x02));
-    var state = Chctr2_128.initSplit(key1, key2);
-
-    const plaintext = "Test split key init";
-    var ciphertext: [plaintext.len]u8 = undefined;
-    var decrypted: [plaintext.len]u8 = undefined;
-
-    try state.encrypt(&ciphertext, plaintext, "tweak");
-    try state.decrypt(&decrypted, &ciphertext, "tweak");
-
-    try std.testing.expectEqualSlices(u8, plaintext, &decrypted);
-}
-
-test "CHCTR2-128 large message" {
-    const key = @as([32]u8, @splat(0));
-    var state = Chctr2_128.init(key);
-
-    // 1KB message
-    const plaintext = @as([1024]u8, @splat(0xAB));
-    var ciphertext: [1024]u8 = undefined;
-    var decrypted: [1024]u8 = undefined;
-
-    try state.encrypt(&ciphertext, &plaintext, "large tweak");
-    try state.decrypt(&decrypted, &ciphertext, "large tweak");
-
-    try std.testing.expectEqualSlices(u8, &plaintext, &decrypted);
+    try std.testing.expectError(error.InputTooShort, cipher.encrypt(&output, &input, ""));
 }

@@ -51,7 +51,12 @@ Use CHCTR2 when you need:
 - Multi-user security guarantees
 - Compatibility with NIST's BBB accordion mode requirements
 
-CHCTR2 cascades HCTR2 twice with two independent keys, achieving 2n/3-bit multi-user security. The construction optimizes the middle hash layers: Z_{1,2} = H1(T,R) XOR H2(T,R). Cost is 2 block cipher calls + 3 field multiplications per block.
+CHCTR2 runs HCTR2 twice with two independent keys, which gets you about 85 bits of multi-user security.
+
+That assumes the data is spread over many users.
+A single user encrypting long messages gets a bit less, around 83 bits with 4 KiB sectors.
+
+Each block costs 2 AES calls and 4 field multiplications.
 
 Reference: "Beyond-Birthday-Bound Security with HCTR2" (ASIACRYPT 2025)
 
@@ -61,10 +66,24 @@ Use HCTR2-TwKD when you need:
 
 - Beyond-birthday-bound security with minimal overhead
 - Same performance as standard HCTR2
-- Tweak-based key derivation (each unique tweak derives a unique key)
-- Applications where the same tweak is not reused excessively
+- Tweak-based key derivation (each unique T0 derives a unique key)
+- Applications where the same T0 is not reused excessively
 
-HCTR2-TwKD derives a fresh HCTR2 key from the first 126 bits of the tweak (T0) using the CENC construction, and passes the remaining tweak bytes (T*) to HCTR2. It achieves 2n/3-bit security when the number of encryptions per T0 is bounded by approximately 2^42. Cost per block is identical to HCTR2 (1 BC call + 2 field multiplications), with a small per-tweak overhead for key derivation.
+HCTR2-TwKD uses the first 16 bytes of the tweak (T0) to derive a fresh HCTR2 key with CENC.
+The top two bits of the first byte must be zero.
+The rest of the tweak (T*) goes to HCTR2.
+
+You get about 85 bits of security as long as no more than about 2^42 blocks use the same T0.
+Tweak blocks and decryption count too.
+Changing only T* does not help, because it does not affect the key.
+
+Each block costs the same as HCTR2, plus one key derivation per message.
+
+The paper only defines the KDF for AES-256.
+The AES-128 version is our own: same idea, with AES-128 and only the first half of the formula.
+
+Every new T0 is one more AES-128 key an attacker can go after.
+Use AES-256 if you expect more than about 2^43 different T0 values.
 
 Reference: "Beyond-Birthday-Bound Security with HCTR2" (ASIACRYPT 2025)
 
