@@ -18,16 +18,11 @@ pub const Chctr2_256 = Chctr2(aes.Aes256);
 /// It encrypts with HCTR2 under the first key, then again under the second key.
 /// From "Beyond-Birthday-Bound Security with HCTR2", ASIACRYPT 2025.
 ///
-/// The middle step XORs the hashes from both keys.
-/// Don't replace that with one hash keyed with H1 XOR H2, the result would be different.
-///
 /// Each block costs 2 AES calls and 4 field multiplications.
 ///
 /// You get about 85 bits of multi-user security instead of 64, with no limits on how tweaks are used.
 /// That assumes the data is spread over many users.
 /// A single user encrypting long messages gets a bit less, around 83 bits with 4 KiB sectors.
-///
-/// `Aes` selects the AES variant.
 pub fn Chctr2(comptime Aes: anytype) type {
     const AesEncryptCtx = aes.AesEncryptCtx(Aes);
     const AesDecryptCtx = aes.AesDecryptCtx(Aes);
@@ -141,6 +136,9 @@ pub fn Chctr2(comptime Aes: anytype) type {
         }
 
         /// Same output as calling HCTR2 twice, but each key only hashes the tweak once.
+        ///
+        /// The middle step XORs the hashes from both keys.
+        /// Don't replace that with one hash keyed with H1 XOR H2, the result would be different.
         fn chctr2(state: *State, dst: []u8, src: []const u8, tweak: []const u8, comptime direction: Direction) !void {
             assert(dst.len == src.len);
             if (src.len < aes_block_length) {
@@ -381,7 +379,8 @@ fn sequence(comptime n: usize) [n]u8 {
     return bytes;
 }
 
-fn expectCiphertext(cipher: anytype, comptime len: usize, tweak: []const u8, hex: []const u8) !void {
+fn expectCiphertext(cipher: anytype, tweak: []const u8, comptime hex: []const u8) !void {
+    const len = hex.len / 2;
     var expected: [len]u8 = undefined;
     var output: [len]u8 = undefined;
     _ = try std.fmt.hexToBytes(&expected, hex);
@@ -391,13 +390,10 @@ fn expectCiphertext(cipher: anytype, comptime len: usize, tweak: []const u8, hex
 
 test "CHCTR2 is HCTR2 applied twice" {
     const hctr2 = @import("hctr2.zig");
-    const message = sequence(1023);
 
-    inline for (.{
-        .{ Chctr2_128, hctr2.Hctr2_128 },
-        .{ Chctr2_256, hctr2.Hctr2_256 },
-    }) |variant| {
-        const Cascade, const Single = variant;
+    inline for (.{ aes.Aes128, aes.Aes256 }) |Aes| {
+        const Cascade = Chctr2(Aes);
+        const Single = hctr2.Hctr2(Aes);
         const key = sequence(Cascade.key_length);
         const key1 = key[0..Cascade.single_key_length].*;
         const key2 = key[Cascade.single_key_length..].*;
@@ -407,32 +403,32 @@ test "CHCTR2 is HCTR2 applied twice" {
         var second = Single.init(key2);
 
         for ([_][]const u8{ "", "tweak", "a tweak longer than one block" }) |tweak| {
-            for ([_]usize{ 16, 17, 32, 1023 }) |len| {
-                var middle: [1023]u8 = undefined;
-                var expected: [1023]u8 = undefined;
-                var output: [1023]u8 = undefined;
-                var decrypted: [1023]u8 = undefined;
+            inline for (.{ 16, 17, 32, 1023 }) |len| {
+                const message = sequence(len);
+                var middle: [len]u8 = undefined;
+                var expected: [len]u8 = undefined;
+                var output: [len]u8 = undefined;
 
-                try first.encrypt(middle[0..len], message[0..len], tweak);
-                try second.encrypt(expected[0..len], middle[0..len], tweak);
-                try cascade.encrypt(output[0..len], message[0..len], tweak);
-                try std.testing.expectEqualSlices(u8, expected[0..len], output[0..len]);
+                try first.encrypt(&middle, &message, tweak);
+                try second.encrypt(&expected, &middle, tweak);
+                try cascade.encrypt(&output, &message, tweak);
+                try std.testing.expectEqualSlices(u8, &expected, &output);
 
-                try cascade.decrypt(decrypted[0..len], output[0..len], tweak);
-                try std.testing.expectEqualSlices(u8, message[0..len], decrypted[0..len]);
+                try cascade.decrypt(&output, &expected, tweak);
+                try std.testing.expectEqualSlices(u8, &message, &output);
             }
         }
     }
 }
 
 test "CHCTR2 known answers" {
-    // Expected values were computed independently from the paper.
+    // Expected values were computed separately, following the paper.
     var cipher128 = Chctr2_128.init(sequence(32));
     var cipher256 = Chctr2_256.init(sequence(64));
 
-    try expectCiphertext(&cipher128, 16, "", "2f4e9b98ee561c3cdc589fec85032854");
-    try expectCiphertext(&cipher128, 33, "tweak", "17bf924f79cf31d420d8989babe6f01562f05365cde3afeffd7f7f52075ec66332");
-    try expectCiphertext(&cipher256, 65, "tweak 256", "dea1f0fa322fd77c2219064ed27d585b2f21f302b85b85218586830825b08c5ae19ab21ac04108daf97850f0d294c307f8ab5f2bb48a88877750531b1261940380");
+    try expectCiphertext(&cipher128, "", "2f4e9b98ee561c3cdc589fec85032854");
+    try expectCiphertext(&cipher128, "tweak", "17bf924f79cf31d420d8989babe6f01562f05365cde3afeffd7f7f52075ec66332");
+    try expectCiphertext(&cipher256, "tweak 256", "dea1f0fa322fd77c2219064ed27d585b2f21f302b85b85218586830825b08c5ae19ab21ac04108daf97850f0d294c307f8ab5f2bb48a88877750531b1261940380");
 }
 
 test "CHCTR2 rejects short input" {

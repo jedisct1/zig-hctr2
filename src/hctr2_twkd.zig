@@ -7,14 +7,12 @@ const Polyval = crypto.onetimeauth.Polyval;
 const hctr2_mod = @import("hctr2.zig");
 
 /// HCTR2-TwKD (Tweak-Based Key Derivation) with AES-128 and CENC KDF.
-/// Gets about 85 bits of security as long as no more than 2^42 blocks use the same T0.
 ///
 /// Every new T0 is one more AES-128 key an attacker can go after.
 /// Use the AES-256 version if you expect more than about 2^43 different T0 values.
 pub const Hctr2TwKD_128 = Hctr2TwKD(aes.Aes128, CencKdf(aes.Aes128));
 
 /// HCTR2-TwKD (Tweak-Based Key Derivation) with AES-256 and CENC KDF.
-/// Gets about 85 bits of security as long as no more than 2^42 blocks use the same T0.
 pub const Hctr2TwKD_256 = Hctr2TwKD(aes.Aes256, CencKdf(aes.Aes256));
 
 /// CENC key derivation.
@@ -24,7 +22,7 @@ pub const Hctr2TwKD_256 = Hctr2TwKD(aes.Aes256, CencKdf(aes.Aes256));
 /// For AES-256: K = (E_L(00||T) XOR E_L(01||T)) || (E_L(00||T) XOR E_L(10||T))
 ///
 /// The paper only defines the AES-256 version.
-/// The AES-128 version is our own: same idea, with AES-128 and only the first half of the formula.
+/// The AES-128 version is our own: same idea, using AES-128 and deriving 16 bytes instead of 32.
 ///
 /// T is stored in 16 bytes, and the top two bits of the first byte must be zero.
 /// Those two bits are where the 00/01/10 prefix goes.
@@ -119,8 +117,7 @@ pub fn CencKdf(comptime Aes: anytype) type {
 ///
 /// You get about 85 bits of multi-user security as long as each user processes at most about 2^42 blocks with the same T0.
 /// Tweak blocks and decryption count too.
-///
-/// `Aes` selects the AES variant and `Kdf` the key derivation function.
+/// Changing only T* does not help, because it does not affect the key.
 pub fn Hctr2TwKD(comptime Aes: anytype, comptime Kdf: anytype) type {
     const Hctr2 = hctr2_mod.Hctr2(Aes);
     const aes_block_length = 16;
@@ -161,9 +158,6 @@ pub fn Hctr2TwKD(comptime Aes: anytype, comptime Kdf: anytype) type {
         ///
         /// The first `kdf_tweak_length` bytes of the tweak are T0, which picks the key.
         /// The rest is T*, which goes to HCTR2.
-        ///
-        /// For the full security, keep it to about 2^42 blocks per T0.
-        /// Changing only T* does not help, because it does not affect the key.
         ///
         /// Returns `error.InputTooShort`, `error.TweakTooShort` or `error.InvalidTweak` on bad input.
         pub fn encrypt(state: *const State, ciphertext: []u8, plaintext: []const u8, tweak: []const u8) !void {
@@ -282,7 +276,8 @@ fn sequence(comptime n: usize) [n]u8 {
     return bytes;
 }
 
-fn expectCiphertext(cipher: anytype, comptime len: usize, tweak: []const u8, hex: []const u8) !void {
+fn expectCiphertext(cipher: anytype, tweak: []const u8, comptime hex: []const u8) !void {
+    const len = hex.len / 2;
     const message = sequence(len);
     const t0 = tweak[0..16];
     const t_star = tweak[16..];
@@ -302,7 +297,7 @@ fn expectCiphertext(cipher: anytype, comptime len: usize, tweak: []const u8, hex
 }
 
 test "HCTR2-TwKD known answers" {
-    // Expected values were computed independently from the paper.
+    // Expected values were computed separately, following the paper.
     const cipher128 = Hctr2TwKD_128.init(sequence(16));
     const cipher256 = Hctr2TwKD_256.init(sequence(32));
 
@@ -311,10 +306,10 @@ test "HCTR2-TwKD known answers" {
     var tweak256 = sequence(16) ++ "tail".*;
     tweak256[0] = 0x2a;
 
-    try expectCiphertext(cipher128, 16, &sequence(16), "69549f31b5a2e330c55a60989743ba99");
-    try expectCiphertext(cipher128, 33, &tweak128, "510ef09ca748a7405eaaad65d1e6cf90d0ab39236a40034bc0c4feb4cc611ede17");
-    try expectCiphertext(cipher256, 16, &sequence(16), "c397e7293e00d50bcaaec448b0c247a1");
-    try expectCiphertext(cipher256, 65, &tweak256, "4c8bfd522e0a059151ec81b8f341d2d9801446375cb59b25a195c1c55298c9e7b7e709538c33e9586b52f0fdbfa986b436148dc68c1017d2529627f684fbf9b5a3");
+    try expectCiphertext(cipher128, &sequence(16), "69549f31b5a2e330c55a60989743ba99");
+    try expectCiphertext(cipher128, &tweak128, "510ef09ca748a7405eaaad65d1e6cf90d0ab39236a40034bc0c4feb4cc611ede17");
+    try expectCiphertext(cipher256, &sequence(16), "c397e7293e00d50bcaaec448b0c247a1");
+    try expectCiphertext(cipher256, &tweak256, "4c8bfd522e0a059151ec81b8f341d2d9801446375cb59b25a195c1c55298c9e7b7e709538c33e9586b52f0fdbfa986b436148dc68c1017d2529627f684fbf9b5a3");
 }
 
 test "HCTR2-TwKD rejects bad input and tweaks" {
