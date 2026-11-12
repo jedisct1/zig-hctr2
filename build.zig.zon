@@ -1,6 +1,6 @@
 .{
     .name = .hctr2,
-    .version = "0.1.10",
+    .version = "0.1.11",
     .fingerprint = 0xc0d5190471ccee9a,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{},

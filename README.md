@@ -202,7 +202,7 @@ Add to your `build.zig.zon`:
 ```zig
 .dependencies = .{
     .hctr2 = .{
-        .url = "https://github.com/jedisct1/zig-hctr2/archive/refs/tags/0.1.10.tar.gz",
+        .url = "https://github.com/jedisct1/zig-hctr2/archive/refs/tags/0.1.11.tar.gz",
         .hash = "...",
     },
 },
