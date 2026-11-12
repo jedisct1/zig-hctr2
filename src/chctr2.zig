@@ -36,12 +36,12 @@ pub fn Chctr2(comptime Aes: anytype) type {
 
         ks1_enc: AesEncryptCtx,
         ks1_dec: AesDecryptCtx,
-        h1: [Polyval.key_length]u8,
+        poly1: Polyval,
         l1: [aes_block_length]u8,
 
         ks2_enc: AesEncryptCtx,
         ks2_dec: AesDecryptCtx,
-        h2: [Polyval.key_length]u8,
+        poly2: Polyval,
         l2: [aes_block_length]u8,
 
         /// Authentication tag length (0 - CHCTR2 is unauthenticated).
@@ -84,7 +84,7 @@ pub fn Chctr2(comptime Aes: anytype) type {
 
             var block_bytes1 = @as([aes_block_length]u8, @splat(0)) ++ [_]u8{1} ++ @as([aes_block_length - 1]u8, @splat(0));
             ks1_enc.encryptWide(2, &block_bytes1, &block_bytes1);
-            const h1 = block_bytes1[0..aes_block_length].*;
+            const poly1 = Polyval.init(block_bytes1[0..aes_block_length]);
             const l1 = block_bytes1[aes_block_length..].*;
 
             const ks2_enc = Aes.initEnc(key2);
@@ -92,17 +92,17 @@ pub fn Chctr2(comptime Aes: anytype) type {
 
             var block_bytes2 = @as([aes_block_length]u8, @splat(0)) ++ [_]u8{1} ++ @as([aes_block_length - 1]u8, @splat(0));
             ks2_enc.encryptWide(2, &block_bytes2, &block_bytes2);
-            const h2 = block_bytes2[0..aes_block_length].*;
+            const poly2 = Polyval.init(block_bytes2[0..aes_block_length]);
             const l2 = block_bytes2[aes_block_length..].*;
 
             return State{
                 .ks1_enc = ks1_enc,
                 .ks1_dec = ks1_dec,
-                .h1 = h1,
+                .poly1 = poly1,
                 .l1 = l1,
                 .ks2_enc = ks2_enc,
                 .ks2_dec = ks2_dec,
-                .h2 = h2,
+                .poly2 = poly2,
                 .l2 = l2,
             };
         }
@@ -153,7 +153,7 @@ pub fn Chctr2(comptime Aes: anytype) type {
             const tweak_len_bytes = if (m_star.len % aes_block_length == 0) 2 * tweak_len_bits + 2 else 2 * tweak_len_bits + 3;
             mem.writeInt(u128, &block_bytes, tweak_len_bytes, .little);
 
-            var poly1 = Polyval.init(&state.h1);
+            var poly1 = state.poly1;
             poly1.update(&block_bytes);
             poly1.update(tweak);
             const pad_len = (0 -% tweak.len) % hash_block_length;
@@ -162,7 +162,7 @@ pub fn Chctr2(comptime Aes: anytype) type {
                 poly1.update(pad[0..pad_len]);
             }
 
-            var poly2 = Polyval.init(&state.h2);
+            var poly2 = state.poly2;
             poly2.update(&block_bytes);
             poly2.update(tweak);
             if (pad_len > 0) {
