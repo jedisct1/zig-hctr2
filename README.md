@@ -1,10 +1,12 @@
 # zig-hctr2
 
-Pure Zig implementation of HCTR2, HCTR3, and their beyond-birthday-bound secure variants (CHCTR2, HCTR2-TwKD, HCTR2++), plus format-preserving variants.
+Pure Zig implementation of HCTR2, HCTR3, and their beyond-birthday-bound secure variants (CHCTR2, HCTR2-TwKD, HCTR2++), plus format-preserving variants and a key-committing authenticated mode (CACH-CHCTR2).
 
 HCTR2 and HCTR3 are length-preserving tweakable wide-block encryption modes. CHCTR2, HCTR2-TwKD and HCTR2++ are beyond-birthday-bound (BBB) secure variants: CHCTR2 and HCTR2-TwKD achieve approximately 85-bit security instead of HCTR2's 64-bit birthday-bound security, while HCTR2++ approaches full 128-bit security when tweaks are unique. The format-preserving variants (HCTR2-FP and HCTR3-FP) are also length-preserving and additionally preserve character sets (e.g., decimal digits remain decimal).
 
 These modes are designed for full-disk encryption, filename encryption, and other applications where nonces and authentication tags would be impractical.
+
+CACH-CHCTR2 is different: it adds a tag to CHCTR2 to provide authenticated encryption with key commitment.
 
 ## What is HCTR2/HCTR3?
 
@@ -98,6 +100,32 @@ Use HCTR2++ when you need:
 HCTR2++ keeps the Hash-Encrypt-Hash structure of HCTR2 but replaces every static block cipher call with Mennink's R3 fresh re-keying scheme and widens the universal hash function from 128 to 256 bits (POLYVAL-style polynomial evaluation over GF(2^256)). Every message block costs one AES key schedule, one AES call and two GF(2^256) multiplications, which makes it noticeably slower than HCTR2. The re-keyed block cipher calls are always AES-128, so the AES-256 variant only changes how subkeys are derived and still provides 128-bit effective strength.
 
 Reference: "HCTR++: A Beyond Birthday Bound Secure HCTR2 Variant" (Ozturk, Kocak, Yayla)
+
+### CACH-CHCTR2 (Key-Committing Authenticated Encryption)
+
+Use CACH-CHCTR2 when you need:
+
+- Authenticated encryption that tolerates nonce reuse
+- Key commitment: an attacker cannot find a ciphertext and a tag that are valid under two keys
+- Beyond-birthday-bound security (~85-bit), like CHCTR2
+- A single AES key instead of the two keys of CHCTR2
+
+CACH turns CHCTR2 into an authenticated cipher.
+The usual way to do that is to pad the message with zeros before encryption.
+The paper shows that this padding gives no key commitment with CHCTR2.
+An attacker finds a ciphertext that is valid under two keys with almost no work.
+
+CACH does not pad the message.
+It derives the two CHCTR2 keys from one AES key and encrypts the message with CHCTR2.
+It then computes a tag from the plaintext and the ciphertext, with AES only.
+
+A 32-byte tag gives 128 bits of key-committing security, and a 16-byte tag gives 64 bits.
+The tweak carries the nonce and the associated data.
+Messages must be at least 32 bytes long.
+
+Each message costs one CHCTR2 call, five AES calls and one AES key schedule.
+
+Reference: "More Keys, Less Commitment: Key-Committing Attacks on BBB Accordions via Encode-then-Encipher and a Key-Committing Transform"
 
 ### Format-Preserving Variants (HCTR2-FP and HCTR3-FP)
 
@@ -310,6 +338,32 @@ pub fn main() !void {
 }
 ```
 
+### CACH-CHCTR2 Encryption (Key-Committing Authenticated Encryption)
+
+```zig
+const hctr2 = @import("hctr2");
+
+pub fn main() !void {
+    // CACH derives the two CHCTR2 keys from this single AES-128 key.
+    const key: [16]u8 = @splat(0x00);
+    var cipher = hctr2.CachChctr2_128.init(key);
+
+    // Messages must be at least 32 bytes long.
+    const plaintext = "a message of at least 32 bytes..";
+
+    // The tweak carries the nonce and the associated data.
+    const tweak = "nonce-and-associated-data";
+    var ciphertext: [plaintext.len]u8 = undefined;
+    var tag: [hctr2.CachChctr2_128.tag_length]u8 = undefined;
+
+    try cipher.encrypt(&ciphertext, &tag, plaintext, tweak);
+
+    // A wrong key, tweak, ciphertext or tag gives error.AuthenticationFailed.
+    var decrypted: [plaintext.len]u8 = undefined;
+    try cipher.decrypt(&decrypted, &ciphertext, tag, tweak);
+}
+```
+
 ### Format-Preserving Encryption (Decimal)
 
 ```zig
@@ -354,9 +408,12 @@ pub fn main() !void {
 
 HCTR2 and HCTR3 provide confidentiality only, not authenticity. They do not detect tampering or forgery. If your threat model includes active attackers who can modify ciphertexts, you need additional authentication (e.g., HMAC, digital signatures) or should use an authenticated encryption mode like AES-GCM instead.
 
+CACH-CHCTR2 is the exception. It returns a tag, and decryption fails with `error.AuthenticationFailed` if anything was modified.
+
 ### Minimum message lengths
 
 - HCTR2/HCTR3 and the BBB variants (CHCTR2, HCTR2-TwKD, HCTR2++): 16 bytes minimum
+- CACH-CHCTR2: 32 bytes minimum
 - HCTR2-FP/HCTR3-FP: depends on radix (e.g., 39 digits for radix-10, 32 digits for radix-16, 22 digits for radix-64)
 
 Messages shorter than the minimum will return `error.InputTooShort`.
@@ -393,3 +450,4 @@ Run `zig build bench -Doptimize=ReleaseFast` to measure performance on your hard
 - [HCTR3](https://csrc.nist.gov/files/pubs/sp/800/197/iprd/docs/3_samvadini.pdf) - NIST SP 800-197 Workshop presentation
 - [Beyond-Birthday-Bound Security with HCTR2](https://doi.org/10.1007/978-981-95-5018-0_1) - Chen, Y.L., et al. (ASIACRYPT 2025, LNCS 16245, pp. 3-34)
 - HCTR++: A Beyond Birthday Bound Secure HCTR2 Variant - Kamil Ozturk, Onur Kocak, Oguz Yayla
+- More Keys, Less Commitment: Key-Committing Attacks on BBB Accordions via Encode-then-Encipher and a Key-Committing Transform - Donghoon Chang, Yukihito Hiraga, Yusuke Naito, Yu Sasaki, Takeshi Sugawara

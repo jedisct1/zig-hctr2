@@ -10,6 +10,11 @@ pub const Chctr2_128 = chctr2.Chctr2_128;
 pub const Chctr2_256 = chctr2.Chctr2_256;
 pub const Chctr2 = chctr2.Chctr2;
 
+const cach_chctr2 = @import("cach_chctr2.zig");
+pub const CachChctr2_128 = cach_chctr2.CachChctr2_128;
+pub const CachChctr2_256 = cach_chctr2.CachChctr2_256;
+pub const CachChctr2 = cach_chctr2.CachChctr2;
+
 const hctr2_twkd = @import("hctr2_twkd.zig");
 pub const Hctr2TwKD_128 = hctr2_twkd.Hctr2TwKD_128;
 pub const Hctr2TwKD_256 = hctr2_twkd.Hctr2TwKD_256;
