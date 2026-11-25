@@ -50,3 +50,16 @@ pub const Hctr3Fp_128_Hex = hctr3fp.Hctr3Fp_128_Hex;
 pub const Hctr3Fp_256_Hex = hctr3fp.Hctr3Fp_256_Hex;
 pub const Hctr3Fp_128_Base64 = hctr3fp.Hctr3Fp_128_Base64;
 pub const Hctr3Fp_256_Base64 = hctr3fp.Hctr3Fp_256_Base64;
+
+const hcenc = @import("hcenc.zig");
+pub const Hcenc = hcenc.Hcenc;
+pub const Hcenc_128 = hcenc.Hcenc_128;
+pub const HcencOptions = hcenc.Options;
+pub const HcencKeyDerivation = hcenc.KeyDerivation;
+pub const EtesHcenc = hcenc.EtesHcenc;
+pub const EtesHcenc_128 = hcenc.EtesHcenc_128;
+pub const HcencAeadOptions = hcenc.AeadOptions;
+pub const UcxHcenc = hcenc.UcxHcenc;
+pub const UcxHcenc_Cmt1 = hcenc.UcxHcenc_Cmt1;
+pub const UcxHcenc_Cmt4 = hcenc.UcxHcenc_Cmt4;
+pub const UcxConcealerKeying = hcenc.ConcealerKeying;

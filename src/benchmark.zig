@@ -3,6 +3,7 @@ const hctr2 = @import("hctr2.zig");
 const hctr3 = @import("hctr3.zig");
 const hctr2fp = @import("hctr2fp.zig");
 const hctr3fp = @import("hctr3fp.zig");
+const hcenc = @import("hcenc.zig");
 
 const Io = std.Io;
 const print = std.debug.print;
@@ -642,6 +643,67 @@ fn benchmarkHCTR3Fp_128_Base64(allocator: std.mem.Allocator, io: Io) !void {
     }
 }
 
+const hcenc_sizes = [_]usize{ 32, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576 };
+const hcenc_size_names = [_][]const u8{ "32B", "64B", "256B", "1KB", "4KB", "16KB", "64KB", "256KB", "1MB" };
+
+/// Works for HCENC and for its AEAD modes, which take a nonce and make the ciphertext longer.
+fn benchmarkHcenc(allocator: std.mem.Allocator, io: Io, comptime name: []const u8, comptime Cipher: type) !void {
+    print("\n=== {s} Benchmarks ===\n", .{name});
+
+    const is_aead = @hasDecl(Cipher, "nonce_length");
+    const expansion = if (is_aead) Cipher.ciphertext_expansion else 0;
+    const key: [Cipher.key_length]u8 = @splat(0x00);
+    const tweak: [16]u8 = @splat(0x00);
+
+    const start_init = readNs(io);
+    const cipher = Cipher.init(key);
+    const init_time = readNs(io) - start_init;
+    print("Initialization: {d:.3} µs\n\n", .{@as(f64, @floatFromInt(init_time)) / 1000.0});
+
+    print("{s:>10} | {s:>12} | {s:>12} | {s:>12} | {s:>12}\n", .{ "Size", "Encrypt (µs)", "Decrypt (µs)", "Enc MB/s", "Dec MB/s" });
+    print("{s:->10}-+-{s:->12}-+-{s:->12}-+-{s:->12}-+-{s:->12}\n", .{ "", "", "", "", "" });
+
+    for (hcenc_sizes, hcenc_size_names) |size, size_name| {
+        const message = try allocator.alloc(u8, size);
+        defer allocator.free(message);
+        const ciphertext = try allocator.alloc(u8, size + expansion);
+        defer allocator.free(ciphertext);
+        const plaintext = try allocator.alloc(u8, size);
+        defer allocator.free(plaintext);
+        @memset(message, 0x42);
+
+        const iterations: usize = if (size < 1024) 100000 else if (size < 65536) 10000 else 300;
+
+        const start_enc = readNs(io);
+        for (0..iterations) |_| {
+            if (is_aead) {
+                try cipher.encrypt(ciphertext, message, &tweak, @splat(0));
+            } else {
+                try cipher.encrypt(ciphertext, message, &tweak);
+            }
+        }
+        const enc_time = readNs(io) - start_enc;
+
+        const start_dec = readNs(io);
+        for (0..iterations) |_| {
+            if (is_aead) {
+                try cipher.decrypt(plaintext, ciphertext, &tweak, @splat(0));
+            } else {
+                try cipher.decrypt(plaintext, ciphertext, &tweak);
+            }
+        }
+        const dec_time = readNs(io) - start_dec;
+        std.mem.doNotOptimizeAway(plaintext);
+
+        const enc_time_per_op = @as(f64, @floatFromInt(enc_time)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
+        const dec_time_per_op = @as(f64, @floatFromInt(dec_time)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
+        const enc_mbps = (@as(f64, @floatFromInt(size)) / 1048576.0) / (enc_time_per_op / 1000000.0);
+        const dec_mbps = (@as(f64, @floatFromInt(size)) / 1048576.0) / (dec_time_per_op / 1000000.0);
+
+        print("{s:>10} | {d:>12.3} | {d:>12.3} | {d:>12.1} | {d:>12.1}\n", .{ size_name, enc_time_per_op, dec_time_per_op, enc_mbps, dec_mbps });
+    }
+}
+
 pub fn main(init: std.process.Init) !void {
     const allocator = std.heap.smp_allocator;
     const io = init.io;
@@ -659,6 +721,10 @@ pub fn main(init: std.process.Init) !void {
     try benchmarkHCTR3Fp_128_Decimal(allocator, io);
     try benchmarkHCTR3Fp_128_Hex(allocator, io);
     try benchmarkHCTR3Fp_128_Base64(allocator, io);
+    try benchmarkHcenc(allocator, io, "HCENC AES-128", hcenc.Hcenc_128);
+    try benchmarkHcenc(allocator, io, "EtES-HCENC", hcenc.EtesHcenc_128);
+    try benchmarkHcenc(allocator, io, "UCX-HCENC CMT-1", hcenc.UcxHcenc_Cmt1);
+    try benchmarkHcenc(allocator, io, "UCX-HCENC CMT-4", hcenc.UcxHcenc_Cmt4);
 
     print("\n", .{});
 }

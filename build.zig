@@ -27,6 +27,8 @@ pub fn build(b: *std.Build) void {
         "src/chctr2.zig",
         "src/cach_chctr2.zig",
         "src/hctr2_twkd.zig",
+        "src/hcenc.zig",
+        "src/dual_polyval.zig",
         "src/hctr2pp.zig",
         "src/hctr3_test.zig",
         "src/hctr2fp_test.zig",

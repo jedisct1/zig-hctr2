@@ -1,12 +1,13 @@
 # zig-hctr2
 
-Pure Zig implementation of HCTR2, HCTR3, and their beyond-birthday-bound secure variants (CHCTR2, HCTR2-TwKD, HCTR2++), plus format-preserving variants and a key-committing authenticated mode (CACH-CHCTR2).
+Pure Zig implementation of HCTR2, HCTR3, and their beyond-birthday-bound secure variants (CHCTR2, HCTR2-TwKD, HCTR2++, HCENC), plus format-preserving variants and committing authenticated modes (CACH-CHCTR2, EtES-HCENC, UCX-HCENC).
 
 HCTR2 and HCTR3 are length-preserving tweakable wide-block encryption modes. CHCTR2, HCTR2-TwKD and HCTR2++ are beyond-birthday-bound (BBB) secure variants: CHCTR2 and HCTR2-TwKD achieve approximately 85-bit security instead of HCTR2's 64-bit birthday-bound security, while HCTR2++ approaches full 128-bit security when tweaks are unique. The format-preserving variants (HCTR2-FP and HCTR3-FP) are also length-preserving and additionally preserve character sets (e.g., decimal digits remain decimal).
 
 These modes are designed for full-disk encryption, filename encryption, and other applications where nonces and authentication tags would be impractical.
 
 CACH-CHCTR2 is different: it adds a tag to CHCTR2 to provide authenticated encryption with key commitment.
+EtES-HCENC and UCX-HCENC do the same for HCENC, with a slightly longer ciphertext instead of a separate tag.
 
 ## What is HCTR2/HCTR3?
 
@@ -126,6 +127,53 @@ Messages must be at least 32 bytes long.
 Each message costs one CHCTR2 call, five AES calls and one AES key schedule.
 
 Reference: "More Keys, Less Commitment: Key-Committing Attacks on BBB Accordions via Encode-then-Encipher and a Key-Committing Transform"
+
+### HCENC
+
+Use HCENC when you need:
+
+- Beyond-birthday-bound security, about 116 bits with the default settings, from a single 32-byte key
+- No limit on how many messages share a tweak
+- Fast encryption of long messages
+
+HCENC only needs AES-128 and POLYVAL.
+
+The first 32 bytes of the message get encrypted with three AES calls, and the result picks the key and the counters used to encrypt the rest.
+
+Every 4096 blocks cost one extra AES call by default.
+You can change that number, called the frame width, but a larger value lowers the security level a bit.
+
+There are two ways to derive the internal keys.
+The default one is cheaper and is all you need for plain encryption.
+The two-stage one costs six more AES calls at setup, and is what EtES-HCENC uses.
+
+Messages must be at least 32 bytes long.
+
+Reference: "HCENC: How to Design an Efficient Committing Beyond-Birthday-Bound Accordion from a Block Cipher with n-Bit Blocks and Keys"
+
+### EtES-HCENC and UCX-HCENC (Committing Authenticated Encryption)
+
+These add authentication to HCENC.
+They take a nonce and associated data, and decryption fails with `error.AuthenticationFailed` if anything was modified.
+
+Reusing a nonce only reveals whether two messages with the same associated data are equal.
+
+EtES-HCENC adds 16 zero bytes to the message and checks them on decryption.
+The ciphertext is 16 bytes longer than the message.
+It commits to the key, but only up to about 60 bits.
+
+UCX-HCENC adds two AES-256 calls on top of EtES-HCENC, and 16 more bytes to the ciphertext.
+That gets commitment up to 116 bits, and the master key is a 32-byte AES-256 key.
+
+- `UcxHcenc_Cmt1` commits to the key.
+- `UcxHcenc_Cmt4` commits to the key, the nonce, the associated data and the message, at the cost of one KMAC256 per message.
+
+Messages must be at least 32 bytes long.
+
+The paper doesn't say how to encode a few things, so here is what this implementation does.
+The nonce is 16 bytes, and the nonce followed by the associated data is the HCENC tweak.
+`UcxHcenc_Cmt4` uses KMAC256 with an empty customization string and a 32-byte output.
+Bits are numbered from the least significant bit of each byte, like POLYVAL does.
 
 ### Format-Preserving Variants (HCTR2-FP and HCTR3-FP)
 
@@ -364,6 +412,52 @@ pub fn main() !void {
 }
 ```
 
+### HCENC Encryption
+
+```zig
+const hctr2 = @import("hctr2");
+
+pub fn main() !void {
+    const key: [32]u8 = @splat(0x00);
+    const cipher = hctr2.Hcenc_128.init(key);
+
+    // Messages must be at least 32 bytes long, and tweaks can have any length.
+    const plaintext = "a message of at least 32 bytes..";
+    var ciphertext: [plaintext.len]u8 = undefined;
+
+    try cipher.encrypt(&ciphertext, plaintext, "tweak");
+
+    var decrypted: [plaintext.len]u8 = undefined;
+    try cipher.decrypt(&decrypted, &ciphertext, "tweak");
+}
+```
+
+Other frame widths and the two-stage derivation are available with `hctr2.Hcenc(.{ .frame_width = 1024, .key_derivation = .two_stage })`.
+
+### UCX-HCENC Encryption (Committing Authenticated Encryption)
+
+```zig
+const hctr2 = @import("hctr2");
+
+pub fn main() !void {
+    const Aead = hctr2.UcxHcenc_Cmt4;
+    const key: [Aead.key_length]u8 = @splat(0x00);
+    const aead = Aead.init(key);
+
+    const nonce: [Aead.nonce_length]u8 = @splat(0x01);
+    const plaintext = "a message of at least 32 bytes..";
+    var ciphertext: [plaintext.len + Aead.ciphertext_expansion]u8 = undefined;
+
+    try aead.encrypt(&ciphertext, plaintext, "associated data", nonce);
+
+    // A wrong key, nonce, associated data or ciphertext gives error.AuthenticationFailed.
+    var decrypted: [plaintext.len]u8 = undefined;
+    try aead.decrypt(&decrypted, &ciphertext, "associated data", nonce);
+}
+```
+
+`EtesHcenc_128` works the same way.
+
 ### Format-Preserving Encryption (Decimal)
 
 ```zig
@@ -408,12 +502,13 @@ pub fn main() !void {
 
 HCTR2 and HCTR3 provide confidentiality only, not authenticity. They do not detect tampering or forgery. If your threat model includes active attackers who can modify ciphertexts, you need additional authentication (e.g., HMAC, digital signatures) or should use an authenticated encryption mode like AES-GCM instead.
 
-CACH-CHCTR2 is the exception. It returns a tag, and decryption fails with `error.AuthenticationFailed` if anything was modified.
+CACH-CHCTR2, EtES-HCENC and UCX-HCENC are the exceptions.
+Decryption fails with `error.AuthenticationFailed` if anything was modified.
 
 ### Minimum message lengths
 
 - HCTR2/HCTR3 and the BBB variants (CHCTR2, HCTR2-TwKD, HCTR2++): 16 bytes minimum
-- CACH-CHCTR2: 32 bytes minimum
+- CACH-CHCTR2, HCENC, EtES-HCENC and UCX-HCENC: 32 bytes minimum
 - HCTR2-FP/HCTR3-FP: depends on radix (e.g., 39 digits for radix-10, 32 digits for radix-16, 22 digits for radix-64)
 
 Messages shorter than the minimum will return `error.InputTooShort`.
@@ -441,6 +536,7 @@ Both HCTR2 and HCTR3 are designed to leverage AES-NI instructions on modern proc
 - HCTR3 has higher security margins but slightly more overhead
 - Format-preserving modes have additional computational cost from radix conversion
 - Both scale well with message size (wide-block encryption is parallelized)
+- HCENC hashes everything under two keys, and does both in a single pass on CPUs with carryless multiplication, which makes it faster than HCTR2 on long messages
 
 Run `zig build bench -Doptimize=ReleaseFast` to measure performance on your hardware.
 
@@ -451,3 +547,4 @@ Run `zig build bench -Doptimize=ReleaseFast` to measure performance on your hard
 - [Beyond-Birthday-Bound Security with HCTR2](https://doi.org/10.1007/978-981-95-5018-0_1) - Chen, Y.L., et al. (ASIACRYPT 2025, LNCS 16245, pp. 3-34)
 - HCTR++: A Beyond Birthday Bound Secure HCTR2 Variant - Kamil Ozturk, Onur Kocak, Oguz Yayla
 - More Keys, Less Commitment: Key-Committing Attacks on BBB Accordions via Encode-then-Encipher and a Key-Committing Transform - Donghoon Chang, Yukihito Hiraga, Yusuke Naito, Yu Sasaki, Takeshi Sugawara
+- HCENC: How to Design an Efficient Committing Beyond-Birthday-Bound Accordion from a Block Cipher with n-Bit Blocks and Keys - Roberto Avanzi
