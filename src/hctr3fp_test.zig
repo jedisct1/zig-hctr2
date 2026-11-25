@@ -51,41 +51,6 @@ test "HCTR3-FP base conversion round-trip - radix 10" {
     }
 }
 
-// Test LFSR next state function
-test "HCTR3-FP LFSR next state - 128-bit" {
-    const Cipher = hctr3fp.Hctr3Fp_128_Decimal;
-
-    // Test that LFSR produces different states
-    var state: [16]u8 = @splat(1);
-    const state2 = Cipher.lfsr_next(state);
-    const state3 = Cipher.lfsr_next(state2);
-
-    // States should all be different
-    try testing.expect(!std.mem.eql(u8, &state, &state2));
-    try testing.expect(!std.mem.eql(u8, &state2, &state3));
-    try testing.expect(!std.mem.eql(u8, &state, &state3));
-
-    // Test all-zero state (should produce non-zero)
-    const zero_state: [16]u8 = @splat(0);
-    const next_zero = Cipher.lfsr_next(zero_state);
-    try testing.expectEqualSlices(u8, &zero_state, &next_zero); // LFSR with all-zero input stays zero
-}
-
-test "HCTR3-FP LFSR next state - AES-256" {
-    const Cipher = hctr3fp.Hctr3Fp_256_Decimal;
-
-    // Note: AES-256 still has a 16-byte block size (256 refers to key size)
-    // Test that LFSR produces different states
-    var state: [16]u8 = @splat(1);
-    const state2 = Cipher.lfsr_next(state);
-    const state3 = Cipher.lfsr_next(state2);
-
-    // States should all be different
-    try testing.expect(!std.mem.eql(u8, &state, &state2));
-    try testing.expect(!std.mem.eql(u8, &state2, &state3));
-    try testing.expect(!std.mem.eql(u8, &state, &state3));
-}
-
 // Encryption/decryption round-trip tests
 test "HCTR3-FP encrypt/decrypt round-trip - radix 10, minimum length" {
     const Cipher = hctr3fp.Hctr3Fp_128_Decimal;
@@ -623,7 +588,7 @@ test "HCTR3-FP encrypt/decrypt round-trip - various radices and message sizes" {
 
     inline for (test_radices) |radix| {
         const Cipher = hctr3fp.Hctr3Fp(aes.Aes128, std.crypto.hash.sha2.Sha256, radix);
-        const key: [16]u8 = @splat(@as(u8, @intCast(radix & 0xFF)));
+        const key: [16]u8 = @splat(@intCast(radix & 0xFF));
         var cipher = Cipher.init(key);
 
         const first_len = Cipher.first_block_length;

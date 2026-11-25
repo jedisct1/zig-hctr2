@@ -1,9 +1,12 @@
 const std = @import("std");
 const crypto = std.crypto;
 const aes = crypto.core.aes;
-const mem = std.mem;
 const assert = std.debug.assert;
-const Polyval = crypto.onetimeauth.Polyval;
+const Polyval = @import("polyval.zig").Polyval(1);
+const absorb = @import("hctr2.zig").absorb;
+const lengthBlock = @import("hctr2.zig").lengthBlock;
+const loadBlock = @import("block.zig").loadBlock;
+const storeBlock = @import("block.zig").storeBlock;
 
 /// HCTR3 instantiated with AES-128 and SHA-256 tweak processing.
 pub const Hctr3_128 = Hctr3(aes.Aes128, crypto.hash.sha2.Sha256);
@@ -25,7 +28,6 @@ pub fn Hctr3(comptime Aes: anytype, comptime Hash: anytype) type {
     const Block = Aes.block;
 
     const aes_block_length = Block.block_length;
-    const hash_block_length = Polyval.block_length;
     const hash_digest_length = Hash.digest_length;
 
     return struct {
@@ -36,7 +38,6 @@ pub fn Hctr3(comptime Aes: anytype, comptime Hash: anytype) type {
         ke_enc: AesEncryptCtx,
         ke_dec: AesDecryptCtx,
         poly: Polyval,
-        h: [Polyval.key_length]u8,
         l: [aes_block_length]u8,
 
         /// HCTR3 does not produce authentication tags.
@@ -78,7 +79,7 @@ pub fn Hctr3(comptime Aes: anytype, comptime Hash: anytype) type {
             var l_bytes: [aes_block_length]u8 = @as([aes_block_length - 1]u8, @splat(0)) ++ [_]u8{1};
             ke_enc.encrypt(&l_bytes, &l_bytes);
 
-            const poly = Polyval.init(&kh_bytes);
+            const poly = Polyval.init(.{kh_bytes});
 
             return State{
                 .ks_enc = ks_enc,
@@ -86,7 +87,6 @@ pub fn Hctr3(comptime Aes: anytype, comptime Hash: anytype) type {
                 .ke_enc = ke_enc,
                 .ke_dec = ke_dec,
                 .poly = poly,
-                .h = kh_bytes,
                 .l = l_bytes,
             };
         }
@@ -131,11 +131,8 @@ pub fn Hctr3(comptime Aes: anytype, comptime Hash: anytype) type {
                 @memset(t[hash_digest_length..], 0);
             }
 
-            var block_bytes: [aes_block_length]u8 = @splat(0);
-            const tweak_len_bits = @as(u128, tweak.len) * 8;
-            const tweak_len_bytes = if (n.len % aes_block_length == 0) 2 * tweak_len_bits + 2 else 2 * tweak_len_bits + 3;
-            mem.writeInt(u128, &block_bytes, tweak_len_bytes, .little);
-            var poly = state.poly;
+            const block_bytes = lengthBlock(tweak.len, n.len);
+            var poly = state.poly.hasher();
             poly.update(&block_bytes);
 
             poly.update(&t);
@@ -171,96 +168,36 @@ pub fn Hctr3(comptime Aes: anytype, comptime Hash: anytype) type {
             }
         }
 
-        fn absorb(poly: *Polyval, msg: []const u8) [Polyval.mac_length]u8 {
-            poly.update(msg);
-            const pad_len = (0 -% msg.len) % hash_block_length;
-            if (pad_len > 0) {
-                const pad = [_]u8{1} ++ @as([hash_block_length - 1]u8, @splat(0));
-                poly.update(pad[0..pad_len]);
-            }
-            var hh: [Polyval.mac_length]u8 = undefined;
-            poly.final(&hh);
-            return hh;
-        }
-
         fn elk(state: *const State, dst: []u8, src: []const u8, seed: [aes_block_length]u8) void {
             const batch = Aes.block.parallel.optimal_parallel_blocks;
-            const block_length_batch = aes_block_length * batch;
-            var counter_bytes_batch: [block_length_batch]u8 = undefined;
-            var lfsr_state = seed;
+            const batch_length = aes_block_length * batch;
+            var lfsr = loadBlock(&seed);
+            var states: [batch_length]u8 = undefined;
             var i: usize = 0;
 
-            if (src.len > block_length_batch) {
-                while (i + block_length_batch <= src.len) : (i += block_length_batch) {
-                    inline for (0..batch) |j| {
-                        @memcpy(counter_bytes_batch[aes_block_length * j ..][0..aes_block_length], &lfsr_state);
-                        lfsr_state = lfsr_next(lfsr_state);
-                    }
-                    state.ke_enc.encryptWide(batch, &counter_bytes_batch, &counter_bytes_batch);
-                    for (dst[i..][0..block_length_batch], src[i..][0..block_length_batch], counter_bytes_batch) |*d, s, c| {
-                        d.* = s ^ c;
-                    }
+            while (i + batch_length <= src.len) : (i += batch_length) {
+                inline for (0..batch) |j| {
+                    storeBlock(states[j * aes_block_length ..][0..aes_block_length], lfsr);
+                    lfsr = lfsrStep(lfsr);
                 }
+                state.ke_enc.xorWide(batch, dst[i..][0..batch_length], src[i..][0..batch_length], states);
             }
 
-            const counter_bytes = counter_bytes_batch[0..aes_block_length];
-
-            while (i + aes_block_length <= src.len) : (i += aes_block_length) {
-                @memcpy(counter_bytes, &lfsr_state);
-                lfsr_state = lfsr_next(lfsr_state);
-                state.ke_enc.encrypt(counter_bytes, counter_bytes);
-                for (dst[i..][0..aes_block_length], src[i..][0..aes_block_length], counter_bytes) |*d, s, c| {
-                    d.* = s ^ c;
+            while (i < src.len) : (i += aes_block_length) {
+                var keystream: [aes_block_length]u8 = undefined;
+                storeBlock(&keystream, lfsr);
+                lfsr = lfsrStep(lfsr);
+                state.ke_enc.encrypt(&keystream, &keystream);
+                const left = @min(aes_block_length, src.len - i);
+                for (dst[i..][0..left], src[i..][0..left], keystream[0..left]) |*d, x, k| {
+                    d.* = x ^ k;
                 }
             }
-
-            const left = src.len - i;
-            if (left > 0) {
-                @memcpy(counter_bytes, &lfsr_state);
-                state.ke_enc.encrypt(counter_bytes, counter_bytes);
-                for (dst[i..], src[i..], counter_bytes[0..left]) |*d, s, c| {
-                    d.* = s ^ c;
-                }
-            }
-        }
-
-        /// Advances an LFSR state without data-dependent control flow.
-        ///
-        /// AES-128 uses x^128 + x^7 + x^2 + x + 1.
-        /// AES-256 uses x^256 + x^254 + x^251 + x^246 + 1.
-        pub fn lfsr_next(state: [aes_block_length]u8) [aes_block_length]u8 {
-            var result = state;
-
-            if (aes_block_length == 16) {
-                const msb = result[15] >> 7;
-                const mask = -%msb;
-
-                var carry: u8 = 0;
-                for (&result) |*byte| {
-                    const new_carry = (byte.* & 0x80) >> 7;
-                    byte.* = (byte.* << 1) | carry;
-                    carry = new_carry;
-                }
-
-                result[0] ^= 0x87 & mask;
-            } else if (aes_block_length == 32) {
-                const msb = result[31] >> 7;
-                const mask = -%msb;
-
-                var carry: u8 = 0;
-                for (&result) |*byte| {
-                    const new_carry = (byte.* & 0x80) >> 7;
-                    byte.* = (byte.* << 1) | carry;
-                    carry = new_carry;
-                }
-
-                result[0] ^= 0x01 & mask;
-                result[30] ^= 0x40 & mask;
-                result[31] ^= 0x08 & mask;
-                result[31] ^= 0x40 & mask;
-            }
-
-            return result;
         }
     };
+}
+
+/// The LFSR that HCTR3 uses as a counter: multiplication by x modulo x^128 + x^7 + x^2 + x + 1.
+pub fn lfsrStep(v: u128) u128 {
+    return (v << 1) ^ (0x87 & (0 -% (v >> 127)));
 }

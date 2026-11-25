@@ -4,7 +4,11 @@ const aes = crypto.core.aes;
 const math = std.math;
 const mem = std.mem;
 const assert = std.debug.assert;
-const Polyval = crypto.onetimeauth.Polyval;
+const Polyval = @import("polyval.zig").Polyval(1);
+const absorb = @import("hctr2.zig").absorb;
+const lengthBlock = @import("hctr2.zig").lengthBlock;
+const loadBlock = @import("block.zig").loadBlock;
+const storeBlock = @import("block.zig").storeBlock;
 
 /// HCTR2+FP with AES-128 encryption and decimal (radix-10) format preservation.
 pub const Hctr2Fp_128_Decimal = Hctr2Fp(aes.Aes128, 10);
@@ -26,7 +30,7 @@ pub const Hctr2Fp_256_Base64 = Hctr2Fp(aes.Aes256, 64);
 
 /// Compute the minimum number of base-RADIX digits needed to represent 128 bits.
 /// This is: ceil(128 / log₂(RADIX)) = smallest k where RADIX^k >= 2^128
-fn computeFirstBlockLength(comptime radix: u16) comptime_int {
+pub fn computeFirstBlockLength(comptime radix: u16) comptime_int {
     if (radix < 2) @compileError("radix must be >= 2");
     if (radix > 256) @compileError("radix must be <= 256");
 
@@ -36,14 +40,14 @@ fn computeFirstBlockLength(comptime radix: u16) comptime_int {
     // Power-of-2 radixes: each digit requires log₂(radix) bits
     // Use ceiling division to ensure we have enough digits
     if (comptime isPowerOfTwo(radix)) {
-        const bits_per_digit = @as(u32, @ctz(@as(u16, radix)));
+        const bits_per_digit: u32 = @ctz(radix);
         return (128 + bits_per_digit - 1) / bits_per_digit;
     }
 
     // Find smallest k where radix^k >= 2^128
     var k: u32 = 1;
     var capacity: u256 = radix;
-    const target: u256 = @as(u256, 1) << 128;
+    const target: u256 = 1 << 128;
 
     while (capacity < target) : (k += 1) {
         capacity *= radix;
@@ -52,8 +56,7 @@ fn computeFirstBlockLength(comptime radix: u16) comptime_int {
     return k;
 }
 
-/// Check if a number is a power of two at compile time.
-inline fn isPowerOfTwo(comptime n: u16) bool {
+pub fn isPowerOfTwo(comptime n: u16) bool {
     return n > 0 and (n & (n - 1)) == 0;
 }
 
@@ -72,13 +75,13 @@ pub fn encodeBaseRadix(value: u128, comptime radix: u16, output: []u8) void {
 
     // Power-of-2 fast path: use bit shifting and masking instead of division
     if (comptime isPowerOfTwo(radix)) {
-        const bits_per_digit = @ctz(@as(u16, radix));
-        const mask: u128 = (@as(u128, 1) << @intCast(bits_per_digit)) - 1;
+        const bits_per_digit = @ctz(radix);
+        const mask: u128 = (1 << bits_per_digit) - 1;
         var bits = value;
 
         for (output) |*digit| {
             digit.* = @intCast(bits & mask);
-            bits >>= @intCast(bits_per_digit);
+            bits >>= bits_per_digit;
         }
 
         // Verify no overflow - remaining bits should be 0
@@ -118,11 +121,11 @@ pub fn decodeBaseRadix(digits: []const u8, comptime radix: u16) !u128 {
 
     // Power-of-2 fast path: use bit shifting and OR instead of multiplication
     if (comptime isPowerOfTwo(radix)) {
-        const bits_per_digit = @ctz(@as(u16, radix));
+        const bits_per_digit = @ctz(radix);
         var value: u128 = 0;
 
         for (digits, 0..) |digit, i| {
-            const shift = @as(u7, @intCast(i * bits_per_digit));
+            const shift: u7 = @intCast(i * bits_per_digit);
             value |= try math.shlExact(u128, digit, shift);
         }
 
@@ -177,7 +180,7 @@ pub fn Hctr2Fp(comptime Aes: anytype, comptime radix: u16) type {
     const Block = Aes.block;
 
     const aes_block_length = Block.block_length;
-    const hash_block_length = Polyval.block_length;
+    const hash_block_length = 16;
     const first_block_len = computeFirstBlockLength(radix);
 
     return struct {
@@ -186,7 +189,6 @@ pub fn Hctr2Fp(comptime Aes: anytype, comptime radix: u16) type {
         ks_enc: AesEncryptCtx,
         ks_dec: AesDecryptCtx,
         poly: Polyval,
-        h: [Polyval.key_length]u8,
         l: [aes_block_length]u8,
 
         /// Authentication tag length (0 - HCTR2+FP is unauthenticated).
@@ -222,13 +224,12 @@ pub fn Hctr2Fp(comptime Aes: anytype, comptime radix: u16) type {
             ks_enc.encryptWide(2, &block_bytes, &block_bytes);
             const h = block_bytes[0..aes_block_length].*;
             const l = block_bytes[aes_block_length..].*;
-            const poly = Polyval.init(&h);
+            const poly = Polyval.init(.{h});
 
             return State{
                 .ks_enc = ks_enc,
                 .ks_dec = ks_dec,
                 .poly = poly,
-                .h = h,
                 .l = l,
             };
         }
@@ -290,19 +291,13 @@ pub fn Hctr2Fp(comptime Aes: anytype, comptime radix: u16) type {
             const tail = src[first_block_len..];
 
             // Hash tweak with Polyval
-            var block_bytes: [aes_block_length]u8 = @splat(0);
-            const tweak_len_bits = @as(u128, tweak.len) * 8;
-            const tweak_len_bytes = if (tail.len % aes_block_length == 0) 2 * tweak_len_bits + 2 else 2 * tweak_len_bits + 3;
-            mem.writeInt(u128, &block_bytes, tweak_len_bytes, .little);
-            var poly = state.poly;
+            const block_bytes = lengthBlock(tweak.len, tail.len);
+            var poly = state.poly.hasher();
             poly.update(&block_bytes);
 
             poly.update(tweak);
-            const pad_len = (0 -% tweak.len) % hash_block_length;
-            if (pad_len > 0) {
-                const pad: [hash_block_length]u8 = @splat(0);
-                poly.update(pad[0..pad_len]);
-            }
+            const zeros: [hash_block_length]u8 = @splat(0);
+            poly.update(zeros[0 .. (0 -% tweak.len) % hash_block_length]);
 
             const poly_after_tweak = poly;
 
@@ -391,18 +386,6 @@ pub fn Hctr2Fp(comptime Aes: anytype, comptime radix: u16) type {
             }
         }
 
-        fn absorb(poly: *Polyval, msg: []const u8) [Polyval.mac_length]u8 {
-            poly.update(msg);
-            const pad_len = (0 -% msg.len) % hash_block_length;
-            if (pad_len > 0) {
-                const pad = [_]u8{1} ++ @as([hash_block_length - 1]u8, @splat(0));
-                poly.update(pad[0..pad_len]);
-            }
-            var hh: [Polyval.mac_length]u8 = undefined;
-            poly.final(&hh);
-            return hh;
-        }
-
         /// Format-Preserving XCTR mode: encrypts/decrypts using one AES block per digit.
         ///
         /// For power-of-2 radixes, we extract multiple digits from each AES block.
@@ -412,13 +395,14 @@ pub fn Hctr2Fp(comptime Aes: anytype, comptime radix: u16) type {
 
             const batch = Aes.block.parallel.optimal_parallel_blocks;
             var blocks: [aes_block_length * batch]u8 = undefined;
+            const seed_value = loadBlock(&seed);
             var counter: u64 = 1;
             var i: usize = 0;
 
             // Power-of-2 fast path: extract multiple digits from each AES block
             if (comptime isPowerOfTwo(radix)) {
-                const bits_per_digit = @ctz(@as(u16, radix));
-                const digits_per_block = @as(usize, 128) / @as(usize, bits_per_digit);
+                const bits_per_digit = @ctz(radix);
+                const digits_per_block = 128 / @as(usize, bits_per_digit);
                 const mask: u128 = radix - 1;
 
                 var block: [aes_block_length]u8 = undefined;
@@ -429,34 +413,30 @@ pub fn Hctr2Fp(comptime Aes: anytype, comptime radix: u16) type {
                     counter += 1;
                 }) {
                     // Generate keystream block
-                    mem.writeInt(u64, block[0..8], counter, .little);
-                    @memset(block[8..aes_block_length], 0);
-                    for (&block, seed) |*p, s| p.* ^= s;
+                    storeBlock(&block, seed_value ^ counter);
                     state.ks_enc.encrypt(&block, &block);
-                    var keystream = mem.readInt(u128, &block, .little);
+                    var keystream = loadBlock(&block);
 
                     // Process all digits from this block
                     inline for (0..digits_per_block) |j| {
                         const ks_digit: u8 = @intCast(keystream & mask);
                         const adjustment = if (dir == .encrypt) ks_digit else radix - ks_digit;
                         dst[i + j] = @intCast((@as(u16, src[i + j]) + adjustment) & mask);
-                        keystream >>= @intCast(bits_per_digit);
+                        keystream >>= bits_per_digit;
                     }
                 }
 
                 // Handle remaining digits
                 if (i < src.len) {
-                    mem.writeInt(u64, block[0..8], counter, .little);
-                    @memset(block[8..aes_block_length], 0);
-                    for (&block, seed) |*p, s| p.* ^= s;
+                    storeBlock(&block, seed_value ^ counter);
                     state.ks_enc.encrypt(&block, &block);
-                    var keystream = mem.readInt(u128, &block, .little);
+                    var keystream = loadBlock(&block);
 
                     while (i < src.len) : (i += 1) {
                         const ks_digit: u8 = @intCast(keystream & mask);
                         const adjustment = if (dir == .encrypt) ks_digit else radix - ks_digit;
                         dst[i] = @intCast((@as(u16, src[i]) + adjustment) & mask);
-                        keystream >>= @intCast(bits_per_digit);
+                        keystream >>= bits_per_digit;
                     }
                 }
 
@@ -467,17 +447,14 @@ pub fn Hctr2Fp(comptime Aes: anytype, comptime radix: u16) type {
             // Batched processing
             while (i + batch <= src.len) : (i += batch) {
                 inline for (0..batch) |j| {
-                    const offset = j * aes_block_length;
-                    mem.writeInt(u64, blocks[offset..][0..8], counter + j, .little);
-                    @memset(blocks[offset..][8..aes_block_length], 0);
-                    for (blocks[offset..][0..aes_block_length], seed) |*p, s| p.* ^= s;
+                    storeBlock(blocks[j * aes_block_length ..][0..aes_block_length], seed_value ^ (counter + j));
                 }
                 counter += batch;
 
                 state.ks_enc.encryptWide(batch, &blocks, &blocks);
 
                 inline for (0..batch) |j| {
-                    const ks_digit: u8 = @intCast(mem.readInt(u128, blocks[j * aes_block_length ..][0..aes_block_length], .little) % radix);
+                    const ks_digit: u8 = @intCast(loadBlock(blocks[j * aes_block_length ..][0..aes_block_length]) % radix);
                     if (comptime dir == .encrypt) {
                         dst[i + j] = @intCast((@as(u16, src[i + j]) + ks_digit) % radix);
                     } else {
@@ -488,14 +465,12 @@ pub fn Hctr2Fp(comptime Aes: anytype, comptime radix: u16) type {
 
             // Remaining digits
             while (i < src.len) : (i += 1) {
-                mem.writeInt(u64, blocks[0..8], counter, .little);
-                @memset(blocks[8..aes_block_length], 0);
-                for (blocks[0..aes_block_length], seed) |*p, s| p.* ^= s;
+                storeBlock(blocks[0..aes_block_length], seed_value ^ counter);
                 counter += 1;
 
                 state.ks_enc.encrypt(blocks[0..aes_block_length], blocks[0..aes_block_length]);
 
-                const ks_digit: u8 = @intCast(mem.readInt(u128, blocks[0..aes_block_length], .little) % radix);
+                const ks_digit: u8 = @intCast(loadBlock(blocks[0..aes_block_length]) % radix);
                 if (comptime dir == .encrypt) {
                     dst[i] = @intCast((@as(u16, src[i]) + ks_digit) % radix);
                 } else {

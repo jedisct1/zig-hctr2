@@ -33,15 +33,15 @@ fn bmul64(x: u64, y: u64) u128 {
     const m2 = m0 << 2;
     const m3 = m0 << 3;
 
-    const xh = @as(u128, x & ~@as(u64, 0xf));
+    const xh: u128 = x & ~@as(u64, 0xf);
     const x0 = xh & m0;
     const x1 = xh & m1;
     const x2 = xh & m2;
     const x3 = xh & m3;
-    const y0 = @as(u128, y) & m0;
-    const y1 = @as(u128, y) & m1;
-    const y2 = @as(u128, y) & m2;
-    const y3 = @as(u128, y) & m3;
+    const y0 = y & m0;
+    const y1 = y & m1;
+    const y2 = y & m2;
+    const y3 = y & m3;
 
     const z0 = (x0 *% y0) ^ (x1 *% y3) ^ (x2 *% y2) ^ (x3 *% y1);
     const z1 = (x0 *% y1) ^ (x1 *% y0) ^ (x2 *% y3) ^ (x3 *% y2);
@@ -50,7 +50,7 @@ fn bmul64(x: u64, y: u64) u128 {
 
     var low: u128 = 0;
     inline for (0..4) |k| {
-        const mask = @as(u64, 0) -% ((x >> k) & 1);
+        const mask = 0 -% ((x >> k) & 1);
         low ^= @as(u128, mask & y) << k;
     }
 
@@ -65,8 +65,8 @@ fn gfMul(a: Elem, b: Elem) Elem {
     for (0..4) |i| {
         for (0..4) |j| {
             const p = bmul64(a[i], b[j]);
-            t[i + j] ^= @as(u64, @truncate(p));
-            t[i + j + 1] ^= @as(u64, @truncate(p >> 64));
+            t[i + j] ^= @truncate(p);
+            t[i + j + 1] ^= @truncate(p >> 64);
         }
     }
 

@@ -3,7 +3,7 @@ const crypto = std.crypto;
 const aes = crypto.core.aes;
 const mem = std.mem;
 const assert = std.debug.assert;
-const DualPolyval = @import("dual_polyval.zig").DualPolyval;
+const DualPolyval = @import("polyval.zig").Polyval(2);
 const KMac256 = crypto.hash.sha3.KMac256;
 const Aes128 = aes.Aes128;
 const Aes256 = aes.Aes256;
@@ -89,7 +89,7 @@ pub fn Hcenc(comptime options: Options) type {
 
         fn fromKeys(h1: Block, h2: Block, k1: Block, k2: Block, k3: Block, ks: Block) State {
             return .{
-                .hash_keys = DualPolyval.init(&h1, &h2),
+                .hash_keys = DualPolyval.init(.{ h1, h2 }),
                 .k1 = k1,
                 .k2 = k2,
                 .k3 = k3,
@@ -243,7 +243,7 @@ fn Keystream(comptime w: u64) type {
         fn leafBatch(ks: *Self, dst: *[batch * block_length]u8, src: *const [batch * block_length]u8) void {
             var masked: [batch * block_length]u8 = undefined;
             inline for (0..batch) |j| {
-                masked[j * block_length ..][0..block_length].* = @as(Vec, src[j * block_length ..][0..block_length].*) ^ ks.anchor;
+                masked[j * block_length ..][0..block_length].* = src[j * block_length ..][0..block_length].* ^ ks.anchor;
             }
             ks.ctx.xorWide(batch, dst, &masked, ks.counterBlocks(batch));
             ks.counter += batch;
@@ -344,9 +344,9 @@ fn xor(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
 /// Multiplication by x in the POLYVAL field.
 fn mulX(a: Block) Block {
     const v = mem.readInt(u128, &a, .little);
-    const reduction = (@as(u128, 0xc2) << 120) | 1;
+    const reduction = (0xc2 << 120) | 1;
     var r: Block = undefined;
-    mem.writeInt(u128, &r, (v << 1) ^ (reduction & (@as(u128, 0) -% (v >> 127))), .little);
+    mem.writeInt(u128, &r, (v << 1) ^ (reduction & (0 -% (v >> 127))), .little);
     return r;
 }
 
@@ -501,7 +501,7 @@ pub fn UcxHcenc(comptime keying: ConcealerKeying, comptime options: AeadOptions)
             const ctx = state.concealerCtx(ad, npub);
             const d = feistelInverse(&ctx, @truncate(window >> 1), @truncate(window >> 129)) orelse return error.AuthenticationFailed;
             var last: Block = undefined;
-            mem.writeInt(u128, &last, @as(u128, @as(u1, @truncate(window))) | (@as(u128, d) << 1), .little);
+            mem.writeInt(u128, &last, @as(u1, @truncate(window)) | (@as(u128, d) << 1), .little);
             const body = c[0 .. k - block_length];
             try state.base.decryptParts(m, c[0..head_length].*, &.{ body[head_length..], &last }, &.{ &npub, ad });
         }
@@ -522,7 +522,7 @@ pub fn UcxHcenc(comptime keying: ConcealerKeying, comptime options: AeadOptions)
     };
 }
 
-const top_bit = @as(u128, 1) << 127;
+const top_bit: u128 = 1 << 127;
 
 fn daviesMeyer(ctx: *const Aes256EncryptCtx, x: u128) u128 {
     var block: Block = undefined;
@@ -535,13 +535,13 @@ fn daviesMeyer(ctx: *const Aes256EncryptCtx, x: u128) u128 {
 fn feistel(ctx: *const Aes256EncryptCtx, d: u127) struct { u128, u127 } {
     const x: u128 = d;
     const b: u127 = @truncate(daviesMeyer(ctx, x));
-    const a = daviesMeyer(ctx, @as(u128, b) | top_bit) ^ x;
+    const a = daviesMeyer(ctx, b | top_bit) ^ x;
     return .{ a, b };
 }
 
 /// Returns null if A and B didn't come from `feistel` under this key.
 fn feistelInverse(ctx: *const Aes256EncryptCtx, a: u128, b: u127) ?u127 {
-    const x = a ^ daviesMeyer(ctx, @as(u128, b) | top_bit);
+    const x = a ^ daviesMeyer(ctx, b | top_bit);
     const r = b ^ @as(u127, @truncate(daviesMeyer(ctx, x & ~top_bit)));
     if ((x & top_bit) | r != 0) return null;
     return @truncate(x);

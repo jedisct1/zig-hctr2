@@ -28,12 +28,11 @@ pub fn build(b: *std.Build) void {
         "src/cach_chctr2.zig",
         "src/hctr2_twkd.zig",
         "src/hcenc.zig",
-        "src/dual_polyval.zig",
+        "src/polyval.zig",
         "src/hctr2pp.zig",
         "src/hctr3_test.zig",
         "src/hctr2fp_test.zig",
         "src/hctr3fp_test.zig",
-        "src/lfsr_test.zig",
     };
     for (test_files) |path| {
         const test_mod = b.createModule(.{

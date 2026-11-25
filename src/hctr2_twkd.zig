@@ -1,9 +1,7 @@
 const std = @import("std");
 const crypto = std.crypto;
 const aes = crypto.core.aes;
-const mem = std.mem;
 const assert = std.debug.assert;
-const Polyval = crypto.onetimeauth.Polyval;
 const hctr2_mod = @import("hctr2.zig");
 
 /// HCTR2-TwKD (Tweak-Based Key Derivation) with AES-128 and CENC KDF.

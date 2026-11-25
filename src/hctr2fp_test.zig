@@ -609,7 +609,7 @@ test "HCTR2-FP encrypt/decrypt round-trip - various radices and message sizes" {
 
     inline for (test_radices) |radix| {
         const Cipher = hctr2fp.Hctr2Fp(aes.Aes128, radix);
-        const key: [16]u8 = @splat(@as(u8, @intCast(radix & 0xFF)));
+        const key: [16]u8 = @splat(@intCast(radix & 0xFF));
         var cipher = Cipher.init(key);
 
         const first_len = Cipher.first_block_length;

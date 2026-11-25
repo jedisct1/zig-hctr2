@@ -101,3 +101,11 @@ test "HCTR3 large message" {
 
     try testing.expectEqualSlices(u8, &plaintext, &decrypted);
 }
+
+test "LFSR step is multiplication by x" {
+    const lfsrStep = hctr3.lfsrStep;
+    try std.testing.expectEqual(2, lfsrStep(1));
+    try std.testing.expectEqual(0x87, lfsrStep(1 << 127));
+    try std.testing.expectEqual(0x87 ^ 2, lfsrStep((1 << 127) | 1));
+    try std.testing.expectEqual(0, lfsrStep(0));
+}

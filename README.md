@@ -536,7 +536,7 @@ Both HCTR2 and HCTR3 are designed to leverage AES-NI instructions on modern proc
 - HCTR3 has higher security margins but slightly more overhead
 - Format-preserving modes have additional computational cost from radix conversion
 - Both scale well with message size (wide-block encryption is parallelized)
-- HCENC hashes everything under two keys, and does both in a single pass on CPUs with carryless multiplication, which makes it faster than HCTR2 on long messages
+- Every mode that uses POLYVAL has its own version of it on CPUs with carryless multiplication, about three times faster than the standard library's, and HCENC and CHCTR2 hash under two keys in a single pass
 
 Run `zig build bench -Doptimize=ReleaseFast` to measure performance on your hardware.
 
